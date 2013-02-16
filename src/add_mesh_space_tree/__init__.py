@@ -40,7 +40,7 @@ import bpy
 from bpy.props import FloatProperty, IntProperty, BoolProperty
 from mathutils import Vector,Euler,Matrix
 
-from sca import SCA # the core class that implements the space colonization algorithm
+from .sca import SCA # the core class that implements the space colonization algorithm
 
 def ellipsoid(r=5,rz=5,p=Vector((0,0,8)),taper=0):
 	r2=r*r

@@ -22,7 +22,7 @@
 bl_info = {
 	"name": "SCA Tree Generator",
 	"author": "michel anders (varkenvarken)",
-	"version": (0, 0, 1),
+	"version": (0, 0, 2),
 	"blender": (2, 66, 0),
 	"location": "View3D > Add > Mesh",
 	"description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -279,8 +279,12 @@ class SCATree(bpy.types.Operator):
 					default=40,
 					min=0)
 	numberOfEndpoints = IntProperty(name="Number of Endpoints",
-					description="The number of enpoints generated in the growing volume",
+					description="The number of endpoints generated in the growing volume",
 					default=100,
+					min=0)
+	newEndPointsPer1000 = IntProperty(name="Number of new Endpoints",
+					description="The number of new endpoints generated in the growing volume per thousand iterations",
+					default=0,
 					min=0)
 	maxTime = FloatProperty(name="Maximum Time",
 					description=("The maximum time to run the generation for "
@@ -352,7 +356,7 @@ class SCATree(bpy.types.Operator):
 			obj_markers = bpy.data.objects.new(mesh.name, mesh)
 			base = bpy.context.scene.objects.link(obj_markers)
 		
-		sca.iterate(self.maxTime)
+		sca.iterate(newendpointsper1000=self.newEndPointsPer1000,maxtime=self.maxTime)
 		
 		obj_new=createGeometry(sca,self.power,self.scale,self.addLeaves, self.pLeaf, self.leafSize, self.leafRandomSize, self.leafRandomRot, self.noModifiers, self.leafMaxConnections)
 		
@@ -386,6 +390,7 @@ class SCATree(bpy.types.Operator):
 		box.prop(self, 'crownOffset')
 		box.prop(self, 'surfaceBias')
 		box.prop(self, 'topBias')
+		box.prop(self, 'newEndPointsPer1000')
 		
 		layout.prop(self, 'addLeaves', icon='MESH_DATA')
 		if self.addLeaves:

@@ -22,7 +22,7 @@
 
 
 from collections import defaultdict as dd
-from random import random,seed
+from random import random,seed,expovariate
 from math import sqrt,pow,sin,cos
 from functools import partial
 
@@ -53,13 +53,19 @@ class SCA:
 		self.TROPISM = TROPISM
 		self.endpoints = []
 
-		volumepoint=volume()
+		self.volumepoint=volume()
 		for i in range(NENDPOINTS):
-			self.endpoints.append(next(volumepoint))
+			self.endpoints.append(next(self.volumepoint))
 	
 		self.branchpoints = [ Branchpoint((0,0,0),None) ]
 		
-	def iterate(self, maxtime=0.0): # maxtime still ignored for now
+	def iterate(self, newendpointsper1000=0, maxtime=0.0): # maxtime still ignored for now
+		
+		endpointsadded=0.0
+		niterations=0.0
+		newendpointsper1000 /= 1000.0
+		t=expovariate(newendpointsper1000) if newendpointsper1000 > 0.0 else 1 # time to the first new 'endpoint add event'
+		
 		while self.NBP>0 and (len(self.endpoints)>0):
 			self.NBP -= 1
 			closestsendpoints=dd(list)
@@ -108,3 +114,15 @@ class SCA:
 					bp.connections+=1
 				
 			self.endpoints = [ep for ei,ep in enumerate(self.endpoints) if not(ei in kill)]
+		
+			if newendpointsper1000 > 0.0:
+				# generate new endpoints with a poisson process
+				# when we first arrive here, t already hold the time to the first event
+				niterations+=1
+				while t < niterations: # we keep on adding endpoints as long as the next event still happens within this iteration
+					self.endpoints.append(next(self.volumepoint))
+					endpointsadded+=1
+					t+=expovariate(newendpointsper1000) # time to new 'endpoint add event'
+				
+		if newendpointsper1000 > 0.0:
+			print("newendpoints/iteration %.3f, actual %.3f in %5.f iterations"%(newendpointsper1000,endpointsadded/niterations,niterations))

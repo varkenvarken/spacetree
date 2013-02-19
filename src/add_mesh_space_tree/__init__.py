@@ -22,7 +22,7 @@
 bl_info = {
 	"name": "SCA Tree Generator",
 	"author": "michel anders (varkenvarken)",
-	"version": (0, 0, 2),
+	"version": (0, 0, 3),
 	"blender": (2, 66, 0),
 	"location": "View3D > Add > Mesh",
 	"description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -32,7 +32,7 @@ bl_info = {
 	"category": "Add Mesh"}
 
 
-from random import random
+from random import random,gauss
 from functools import partial
 from math import sin,cos
 
@@ -91,7 +91,7 @@ def ellipsoid2(rxy=5,rz=5,p=Vector((0,0,8)),surfacebias=1,topbias=1):
 		if not reject:
 			yield m
 
-def createLeaves(tree, probability=0.5, size=0.5, randomsize=0.1, randomrot=0.1, maxconnections=2):
+def createLeaves(tree, probability=0.5, size=0.5, randomsize=0.1, randomrot=0.1, maxconnections=2, bunchiness=1.0):
 	p=bpy.context.scene.cursor_location
 	
 	verts=[]
@@ -100,26 +100,39 @@ def createLeaves(tree, probability=0.5, size=0.5, randomsize=0.1, randomrot=0.1,
 	c2=Vector((    size,-size/2,0))
 	c3=Vector((    size, size/2,0))
 	c4=Vector((-size/10, size/2,0))
+	t=gauss(1.0/probability,0.1)
+	bpswithleaves=0
 	for bp in tree.branchpoints:
-		if (bp.connections < maxconnections) and (random() <= probability) :
-			rx = (random()-0.5)*randomrot*6.283
-			ry = (random()-0.5)*randomrot*6.283
-			rot = Euler((rx,ry,random()*6.283),'ZXY')
-			scale = 1+(random()-0.5)*randomsize
-			v=c1.copy()
-			v.rotate(rot)
-			verts.append(v*scale+bp.v)
-			v=c2.copy()
-			v.rotate(rot)
-			verts.append(v*scale+bp.v)
-			v=c3.copy()
-			v.rotate(rot)
-			verts.append(v*scale+bp.v)
-			v=c4.copy()
-			v.rotate(rot)
-			verts.append(v*scale+bp.v)
-			n = len(verts)
-			faces.append((n-4,n-3,n-2,n-1))
+		if bp.connections < maxconnections:
+		
+			dv = tree.branchpoints[bp.parent].v - bp.v if bp.parent else Vector((0,0,0))
+			dvp = Vector((0,0,0))
+			
+			bpswithleaves+=1
+			nleavesonbp=0
+			while t<bpswithleaves:
+				nleavesonbp+=1
+				rx = (random()-0.5)*randomrot*6.283 # TODO vertical tilt in direction of tropism
+				ry = (random()-0.5)*randomrot*6.283
+				rot = Euler((rx,ry,random()*6.283),'ZXY')
+				scale = 1+(random()-0.5)*randomsize
+				v=c1.copy()
+				v.rotate(rot)
+				verts.append(v*scale+bp.v+dvp)
+				v=c2.copy()
+				v.rotate(rot)
+				verts.append(v*scale+bp.v+dvp)
+				v=c3.copy()
+				v.rotate(rot)
+				verts.append(v*scale+bp.v+dvp)
+				v=c4.copy()
+				v.rotate(rot)
+				verts.append(v*scale+bp.v+dvp)
+				n = len(verts)
+				faces.append((n-4,n-3,n-2,n-1))
+				t += gauss(1.0/probability,0.1)					 # this is not the best choice of distribution because we might get negative values especially if sigma is large
+				dvp = nleavesonbp*(dv/(probability**bunchiness)) # TODO add some randomness to the offset, make bunchiness an option in the interface
+				
 	mesh = bpy.data.meshes.new('Leaves')
 	mesh.from_pydata(verts,[],faces)
 	mesh.update(calc_edges=True)
@@ -146,7 +159,7 @@ def createMarkers(tree,scale=0.05):
 	mesh.update(calc_edges=True)
 	return mesh
 
-def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leafsize=0.5, leafrandomsize=0.1, leafrandomrot=0.1, nomodifiers=False, maxleafconnections=2):
+def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leafsize=0.5, leafrandomsize=0.1, leafrandomrot=0.1, nomodifiers=False, maxleafconnections=2, bleaf=1.0):
 	
 	p=bpy.context.scene.cursor_location
 	verts=[]
@@ -198,7 +211,7 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
 
 	# create the leaves object
 	if addleaves:
-		mesh = createLeaves(tree, pleaf, leafsize, leafrandomsize, leafrandomrot, maxleafconnections)
+		mesh = createLeaves(tree, pleaf, leafsize, leafrandomsize, leafrandomrot, maxleafconnections, bleaf)
 		obj_leaves = bpy.data.objects.new(mesh.name, mesh)
 		base = bpy.context.scene.objects.link(obj_leaves)
 		obj_leaves.parent = obj_new
@@ -293,10 +306,15 @@ class SCATree(bpy.types.Operator):
 					min=0.0,
 					soft_max=10)
 	pLeaf = FloatProperty(name="Leaves per internode",
-					description=("The number of leaves per internode"),
+					description=("The average number of leaves per internode"),
 					default=0.5,
 					min=0.0,
 					soft_max=1)
+	bLeaf = FloatProperty(name="Leaf clustering",
+					description=("How much leaves cluster to the end of the internode"),
+					default=1,
+					min=1,
+					soft_max=4)
 	leafSize = FloatProperty(name="Leaf Size",
 					description=("The leaf size"),
 					default=0.5,
@@ -358,7 +376,7 @@ class SCATree(bpy.types.Operator):
 		
 		sca.iterate(newendpointsper1000=self.newEndPointsPer1000,maxtime=self.maxTime)
 		
-		obj_new=createGeometry(sca,self.power,self.scale,self.addLeaves, self.pLeaf, self.leafSize, self.leafRandomSize, self.leafRandomRot, self.noModifiers, self.leafMaxConnections)
+		obj_new=createGeometry(sca,self.power,self.scale,self.addLeaves, self.pLeaf, self.leafSize, self.leafRandomSize, self.leafRandomRot, self.noModifiers, self.leafMaxConnections, self.bLeaf)
 		
 		if self.showMarkers:
 			obj_markers.parent = obj_new
@@ -397,6 +415,7 @@ class SCATree(bpy.types.Operator):
 			box = layout.box()
 			box.label("Leaf Settings:")
 			box.prop(self,'pLeaf')
+			box.prop(self,'bLeaf')
 			box.prop(self,'leafSize') 
 			box.prop(self,'leafRandomSize') 	
 			box.prop(self,'leafRandomRot')

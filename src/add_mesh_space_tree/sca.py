@@ -44,13 +44,14 @@ def sphere(r,p):
 			yield p+Vector((x,y,z))
 
 class SCA:
-	def __init__(self,NENDPOINTS = 100,d = 0.3,NBP = 2000, KILLDIST = 5, INFLUENCE = 15, SEED=42, volume=partial(sphere,5,Vector((0,0,8))), TROPISM=0.0):
+	def __init__(self,NENDPOINTS = 100,d = 0.3,NBP = 2000, KILLDIST = 5, INFLUENCE = 15, SEED=42, volume=partial(sphere,5,Vector((0,0,8))), TROPISM=0.0, exclude=lambda p: False):
 		seed(SEED)
 		self.d = d
 		self.NBP = NBP
 		self.KILLDIST = KILLDIST*KILLDIST*d*d
 		self.INFLUENCE = INFLUENCE*INFLUENCE*d*d
 		self.TROPISM = TROPISM
+		self.exclude = exclude
 		self.endpoints = []
 
 		self.volumepoint=volume()
@@ -105,14 +106,16 @@ class SCA:
 				sd/=ll
 			
 				if sd < 1e-7 : print('SD very small')
-				bp = Branchpoint(self.branchpoints[bi].v+sd*self.d,bi)
-				self.branchpoints.append(bp)
-				bp = self.branchpoints[bi]
-				bp.connections+=1
-				while not (bp.parent is None):
-					bp = self.branchpoints[bp.parent]
+				newp = self.branchpoints[bi].v+sd*self.d
+				if not self.exclude(newp):
+					bp = Branchpoint(newp,bi)
+					self.branchpoints.append(bp)
+					bp = self.branchpoints[bi]
 					bp.connections+=1
-				
+					while not (bp.parent is None):
+						bp = self.branchpoints[bp.parent]
+						bp.connections+=1
+					
 			self.endpoints = [ep for ei,ep in enumerate(self.endpoints) if not(ei in kill)]
 		
 			if newendpointsper1000 > 0.0:

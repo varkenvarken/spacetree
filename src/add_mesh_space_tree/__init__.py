@@ -22,12 +22,12 @@
 bl_info = {
 	"name": "SCA Tree Generator",
 	"author": "michel anders (varkenvarken)",
-	"version": (0, 0, 3),
+	"version": (0, 0, 4),
 	"blender": (2, 66, 0),
 	"location": "View3D > Add > Mesh",
 	"description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
 	"warning": "",
-	"wiki_url": "http://to be determined",
+	"wiki_url": "https://github.com/varkenvarken/spacetree/wiki",
 	"tracker_url": "",
 	"category": "Add Mesh"}
 
@@ -37,11 +37,18 @@ from functools import partial
 from math import sin,cos
 
 import bpy
-from bpy.props import FloatProperty, IntProperty, BoolProperty
+from bpy.props import FloatProperty, IntProperty, BoolProperty, EnumProperty
 from mathutils import Vector,Euler,Matrix
 
 from .sca import SCA # the core class that implements the space colonization algorithm
 
+def availableGroups(self, context):
+	return [(name, name, name, n) for n,name in enumerate(bpy.data.groups.keys())]
+  
+def availableGroupsOrNone(self, context):
+	groups = [ ('None', 'None', 'None', 1) ]
+	return groups + [(name, name, name, n+1) for n,name in enumerate(bpy.data.groups.keys())]
+  
 def ellipsoid(r=5,rz=5,p=Vector((0,0,8)),taper=0):
 	r2=r*r
 	z2=rz*rz
@@ -55,10 +62,10 @@ def ellipsoid(r=5,rz=5,p=Vector((0,0,8)),taper=0):
 		if f*x*x/r2+f*y*y/r2+z*z/z2 <= 1:
 			yield p+Vector((x,y,z))
 
-def pointInsideMesh(point,ob):
+def pointInsideMesh(pointrelativetocursor,ob):
 	# adapted from http://blenderartists.org/forum/showthread.php?195605-Detecting-if-a-point-is-inside-a-mesh-2-5-API&p=1691633&viewfull=1#post1691633
 	mat = ob.matrix_world.inverted()
-	orig = mat*(point+bpy.context.scene.cursor_location)
+	orig = mat*(pointrelativetocursor+bpy.context.scene.cursor_location)
 	count = 0
 	axis=Vector((0,0,1))
 	while True:
@@ -90,6 +97,77 @@ def ellipsoid2(rxy=5,rz=5,p=Vector((0,0,8)),surfacebias=1,topbias=1):
 				break
 		if not reject:
 			yield m
+
+def halton3D(index):
+	"""
+	return a quasi random 3D vector R3 in [0,1].
+	each component is based on a halton sequence. 
+	quasi random is good enough for our purposes and is 
+	more evenly distributed then pseudo random sequences. 
+	See en.m.wikipedia.org/wiki/Halton_sequence
+	"""
+  
+	def halton(index, base):
+		result=0
+		f=1.0/base
+		I=index
+		while I>0:
+			result += f*(I%base)
+			I=int(I/base)
+			f/=base
+		return result
+	return Vector((halton(index,2),halton(index,3),halton(index,5)))
+
+def insidegroup(pointrelativetocursor, group):
+	if bpy.data.groups.find(group)<0 : return False
+	for ob in bpy.data.groups[group].objects:
+		if pointInsideMesh(pointrelativetocursor,ob):
+			return True
+	return False
+  
+def groupdistribution(crowngroup,shadowgroup=None,seed=0,size=Vector((1,1,1)),pointrelativetocursor=Vector((0,0,0))):
+	if crowngroup == shadowgroup:
+		shadowgroup = None # safeguard otherwise every marker would be rejected
+	nocrowngroup = bpy.data.groups.find(crowngroup)<0
+	noshadowgroup = (shadowgroup is None) or (bpy.data.groups.find(shadowgroup)<0) or (shadowgroup == 'None')
+	index=100+seed
+	nmarkers=0
+	nyield=0
+	while True:
+		nmarkers+=1
+		v = halton3D(index)
+		v[0] *= size[0]
+		v[1] *= size[1]
+		v[2] *= size[2]
+		v+=pointrelativetocursor
+		index+=1
+		insidecrown = nocrowngroup or insidegroup(v,crowngroup)
+		outsideshadow = noshadowgroup or not insidegroup(v,shadowgroup)
+		# if shadowgroup overlaps all or a significant part of the crowngroup
+		# no markers will be yielded and we would be in an endless loop.
+		# so if we yield too few correct markers we start yielding them anyway.
+		lowyieldrate = (nmarkers>200) and (nyield/nmarkers < 0.01)
+		if (insidecrown and outsideshadow) or lowyieldrate:
+			nyield+=1
+			yield v
+		
+def groupExtends(group):
+	"""
+	return a size,minimum tuple both Vector elements, describing the size and position
+	of the bounding box in world space that encapsulates all objects in a group.
+	"""
+	bb=[]
+	if bpy.data.groups.find(group) >=0 :
+		for ob in bpy.data.groups[group].objects:
+			rot = ob.matrix_world.to_quaternion()
+			scale = ob.matrix_world.to_scale()
+			translate = ob.matrix_world.translation
+			for v in ob.bound_box: # v is not a vector but an array of floats
+				p = ob.matrix_world * Vector(v[0:3])
+				bb.extend(p[0:3])
+	mx = Vector((max(bb[0::3]), max(bb[1::3]), max(bb[2::3])))
+	mn = Vector((min(bb[0::3]), min(bb[1::3]), min(bb[2::3])))
+	return mx-mn,mn
 
 def createLeaves(tree, probability=0.5, size=0.5, randomsize=0.1, randomrot=0.1, maxconnections=2, bunchiness=1.0):
 	p=bpy.context.scene.cursor_location
@@ -131,7 +209,7 @@ def createLeaves(tree, probability=0.5, size=0.5, randomsize=0.1, randomrot=0.1,
 				n = len(verts)
 				faces.append((n-4,n-3,n-2,n-1))
 				t += gauss(1.0/probability,0.1)					 # this is not the best choice of distribution because we might get negative values especially if sigma is large
-				dvp = nleavesonbp*(dv/(probability**bunchiness)) # TODO add some randomness to the offset, make bunchiness an option in the interface
+				dvp = nleavesonbp*(dv/(probability**bunchiness)) # TODO add some randomness to the offset
 				
 	mesh = bpy.data.meshes.new('Leaves')
 	mesh.from_pydata(verts,[],faces)
@@ -140,7 +218,8 @@ def createLeaves(tree, probability=0.5, size=0.5, randomsize=0.1, randomrot=0.1,
 	return mesh
 
 def createMarkers(tree,scale=0.05):
-	p=bpy.context.scene.cursor_location
+	#not used as markers are parented to tree object that is created at the cursor position
+	#p=bpy.context.scene.cursor_location
 	
 	verts=[]
 	faces=[]
@@ -250,7 +329,7 @@ class SCATree(bpy.types.Operator):
 					soft_max=1.0)
 	power = FloatProperty(name="Power",
 					description="Tapering power of branch connections",
-					default=0.5,
+					default=0.3,
 					min=0.01,
 					soft_max=1.0)
 	scale = FloatProperty(name="Scale",
@@ -258,6 +337,15 @@ class SCATree(bpy.types.Operator):
 					default=0.01,
 					min=0.0001,
 					soft_max=1.0)
+	
+	useGroups = BoolProperty(name="Use object groups", 
+					description="Use groups of objects to specify marker distribution",
+					default=False)
+	
+	crownGroup = EnumProperty(items=availableGroups,name='Crown Group',description='Group of objects that specify crown shape')
+	shadowGroup = EnumProperty(items=availableGroupsOrNone,name='Shadow Group',description='Group of objects subtracted from the crown shape')
+	exclusionGroup = EnumProperty(items=availableGroupsOrNone,name='Exclusion Group',description='Group of objects that will not be penetrated by growing branches')
+	
 	crownSize = FloatProperty(name="Crown Size",
 					description="Crown size",
 					default=5,
@@ -301,7 +389,7 @@ class SCATree(bpy.types.Operator):
 					min=0)
 	maxTime = FloatProperty(name="Maximum Time",
 					description=("The maximum time to run the generation for "
-								"in seconds generation (0.0 = Disabled)"),
+								"in seconds/generation (0.0 = Disabled). Currently ignored"),
 					default=0.0,
 					min=0.0,
 					soft_max=10)
@@ -309,7 +397,7 @@ class SCATree(bpy.types.Operator):
 					description=("The average number of leaves per internode"),
 					default=0.5,
 					min=0.0,
-					soft_max=1)
+					soft_max=4)
 	bLeaf = FloatProperty(name="Leaf clustering",
 					description=("How much leaves cluster to the end of the internode"),
 					default=1,
@@ -336,7 +424,7 @@ class SCATree(bpy.types.Operator):
 					min=0)
 	addLeaves = BoolProperty(name="Add Leaves", default=False)
 	updateTree = BoolProperty(name="Update Tree", default=False)
-	noModifiers = BoolProperty(name="No Modifers", default=False)
+	noModifiers = BoolProperty(name="No Modifers", default=True)
 	showMarkers = BoolProperty(name="Show Markers", default=False)
 	markerScale = FloatProperty(name="Marker Scale",
 					description=("The size of the markers"),
@@ -350,6 +438,7 @@ class SCATree(bpy.types.Operator):
 		return context.mode == 'OBJECT'
 
 	def execute(self, context):
+		print("execute")
 		if not self.updateTree:
 			return {'PASS_THROUGH'}
 
@@ -359,6 +448,12 @@ class SCATree(bpy.types.Operator):
 			bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
 		except RuntimeError:
 			pass
+		
+		if self.useGroups:
+			size,minp = groupExtends(self.crownGroup)
+			volumefie=partial(groupdistribution,self.crownGroup,self.shadowGroup,self.randomSeed,size,minp-bpy.context.scene.cursor_location)
+		else:
+			volumefie=partial(ellipsoid2,self.crownSize*self.crownShape,self.crownSize,Vector((0,0,self.crownSize+self.crownOffset)),self.surfaceBias,self.topBias)
 			
 		sca = SCA(NBP = self.maxIterations,
 			NENDPOINTS=self.numberOfEndpoints,
@@ -367,7 +462,8 @@ class SCATree(bpy.types.Operator):
 			INFLUENCE=self.influenceRange,
 			SEED=self.randomSeed,
 			TROPISM=self.tropism,
-			volume=partial(ellipsoid2,self.crownSize*self.crownShape,self.crownSize,Vector((0,0,self.crownSize+self.crownOffset)),self.surfaceBias,self.topBias))
+			volume=volumefie,
+			exclude=lambda p: insidegroup(p, self.exclusionGroup))
 
 		if self.showMarkers:
 			mesh = createMarkers(sca, self.markerScale)
@@ -403,9 +499,26 @@ class SCATree(bpy.types.Operator):
 		box.prop(self, 'power')
 		box.prop(self, 'scale')
 		box.prop(self, 'tropism')
-		box.prop(self, 'crownSize')
-		box.prop(self, 'crownShape')
-		box.prop(self, 'crownOffset')
+		
+		newbox = box.box()
+		newbox.label("Crown shape")
+		newbox.prop(self,'useGroups')
+		if self.useGroups:
+			newbox.label("Object groups defining crown shape")
+			groupbox = newbox.box()
+			groupbox.prop(self,'crownGroup')
+			groupbox = newbox.box()
+			groupbox.alert=(self.shadowGroup == self.crownGroup)
+			groupbox.prop(self,'shadowGroup')
+			groupbox = newbox.box()
+			groupbox.alert=(self.exclusionGroup == self.crownGroup)
+			groupbox.prop(self,'exclusionGroup')
+		else:
+			newbox.label("Simple ellipsoid defining crown shape")
+			newbox.prop(self, 'crownSize')
+			newbox.prop(self, 'crownShape')
+			newbox.prop(self, 'crownOffset')
+
 		box.prop(self, 'surfaceBias')
 		box.prop(self, 'topBias')
 		box.prop(self, 'newEndPointsPer1000')

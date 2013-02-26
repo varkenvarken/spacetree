@@ -1,0 +1,45 @@
+<html><title>Space tree roadmap/TODO</title>
+<body>
+<style>dt{font-weight:bold} .done{background-color:#dfd}</style>
+<h1>road map/TODO</h2>
+<p>These points are in no particular order and because some require a considerable amount of research and work I don't even guarantee they will all be tackled :-) </p>
+<dl>
+<dt class="done">add endpoints while iterating</dt>
+<dd>to create bushier trees [available in version 0.0.2]
+</dd>
+<dt class="done" >add more than one leaf per internode</dt>
+<dd>to create fuller trees even with fairly large internode sizes
+[available in version 0.0.3]
+</dd>
+<dt>add object instead of plain leaves</dt>
+<dd>maybe not instead of but in addition to. would allow for flowers with real geometry. Will need it's own set of probability parameters </dd>
+<dt>speed improvement</dt>
+<dd>if possible. use some space partitioning algorithm or hashed bins.
+</dd>
+<dt class="done" >better distribution of endpoints</dt>
+<dd>using sobol or halton sequences. more evenly distributed than plain random is the goal here.[available in version 0.0.4]
+</dd>
+<dt class="done" >crown shape definition using blobs</dt>
+<dd>a group of blobs or a meshes may be used as an alternative crown form specification. [available in version 0.0.4]</dd>
+<dt>kill distance sanity check</dt>
+<dd>to prevent endless branchpoint additions
+</dd>
+<dt>complexity reduction</dt>
+<dd>of trunk skeleton before skinning as described by Runions in his paper. additionally even widely seperated points may be reduced if they are more or less in line, but then we have to take their relatively larger size into account when generating uv-maps.
+</dd>
+<dt>research alternatives for trunk skinning</dt>
+<dd>for example implicit surfaces (blobs) and naive skinning (= our trunk is simple, I.e. all branchforks could be made 2fold by restricting new branchpoints to connect to unconnected branchpoints only so we don't have to check for special cases. )
+</dd>
+<dt>alllow multiple startpoints</dt>
+<dd>to create hedgerows or twinned trees. either use the (selected) vertices of a seed object or the locations in a group (of objects , probably empties)</dd>
+</dl>
+<dt class="done">collision check</dt>
+<dd/>to prevent new branchpoints from penetrating selected meshes. note that this might be different from the group of objects that influence the point density.[available in version 0.0.4]
+<dt>better leaves</dt>
+<dd>instead of a plain square we could introduce a slightly folded and slightly curved hexagon consisting of three quads possibly with some randomness added. this would give the leaves considerable depth. we should provide two simple leaf shaders and apply them according to the active renderer. Additionally we should distribute leaves randomly over several objects. that way an object info node could supply some randomness to the leaf material. (making each leaf its own object is not such a good idea, that would be very slow)</dd>
+<dt>optimal uv maps for branches</dt>
+<dd>this would only be feasible if we don't use the skin modifier (and interpolate the branches ourselves). An optimal uv map would have each branch as a seperate, vertical strip. we do have a conundrum here: to avoid seams along the branches these strips should be rectangular but then we would distort the mapped scale as the branches get smaller near their tips.</dd>
+<dt>An osl based bark shader</dt>
+<dd>I have some ideas on how to create a procedural shader that may simulate vertical cracks without simulating the actual formation of bark formation but these are not really fleshed out yet. it also depends on if we want to use uv-maps or some other coordinate system, for example tangent space.</dd>
+</body>
+</html>

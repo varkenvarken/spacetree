@@ -44,7 +44,8 @@ def sphere(r,p):
 			yield p+Vector((x,y,z))
 
 class SCA:
-	def __init__(self,NENDPOINTS = 100,d = 0.3,NBP = 2000, KILLDIST = 5, INFLUENCE = 15, SEED=42, volume=partial(sphere,5,Vector((0,0,8))), TROPISM=0.0, exclude=lambda p: False):
+	def __init__(self,NENDPOINTS = 100,d = 0.3,NBP = 2000, KILLDIST = 5, INFLUENCE = 15, SEED=42, volume=partial(sphere,5,Vector((0,0,8))), TROPISM=0.0, exclude=lambda p: False,
+		startingpoints=[]):
 		seed(SEED)
 		self.d = d
 		self.NBP = NBP
@@ -58,7 +59,7 @@ class SCA:
 		for i in range(NENDPOINTS):
 			self.endpoints.append(next(self.volumepoint))
 	
-		self.branchpoints = [ Branchpoint((0,0,0),None) ]
+		self.branchpoints = [ Branchpoint((0,0,0),None) ] if len(startingpoints)==0 else startingpoints
 		
 	def iterate(self, newendpointsper1000=0, maxtime=0.0): # maxtime still ignored for now
 		

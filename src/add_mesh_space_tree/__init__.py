@@ -22,7 +22,7 @@
 bl_info = {
 	"name": "SCA Tree Generator",
 	"author": "michel anders (varkenvarken)",
-	"version": (0, 0, 4),
+	"version": (0, 0, 5),
 	"blender": (2, 66, 0),
 	"location": "View3D > Add > Mesh",
 	"description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -40,7 +40,7 @@ import bpy
 from bpy.props import FloatProperty, IntProperty, BoolProperty, EnumProperty
 from mathutils import Vector,Euler,Matrix
 
-from .sca import SCA # the core class that implements the space colonization algorithm
+from .sca import SCA, Branchpoint # the core class that implements the space colonization algorithm and the definition of a segment
 
 def availableGroups(self, context):
 	return [(name, name, name, n) for n,name in enumerate(bpy.data.groups.keys())]
@@ -244,13 +244,17 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
 	verts=[]
 	edges=[]
 	radii=[]
+	roots=set()
+	
 	# Loop over all branchpoints and create connected edges
 	for bp in tree.branchpoints:
 		verts.append(bp.v+p)
 		radii.append(bp.connections)
 		if not (bp.parent is None) :
 			edges.append((len(verts)-1,bp.parent))
-	
+		else :
+			roots.add(len(verts)-1)
+			
 	# create the tree mesh
 	mesh = bpy.data.meshes.new('Tree')
 	mesh.from_pydata(verts, edges, [])
@@ -282,10 +286,12 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
 
 		for i,v in enumerate(skinverts):
 			v.radius = [(radii[i]**power)*scale,(radii[i]**power)*scale]
+			if i in roots:
+				v.use_root = True
 		
 		# add a subsurf modifier to smooth the skin
 		bpy.ops.object.modifier_add(type='SUBSURF')
-		bpy.context.active_object.modifiers[2].levels = 1
+		bpy.context.active_object.modifiers[2].levels = 0
 		bpy.context.active_object.modifiers[2].render_levels = 2
 
 	# create the leaves object
@@ -345,6 +351,12 @@ class SCATree(bpy.types.Operator):
 	crownGroup = EnumProperty(items=availableGroups,name='Crown Group',description='Group of objects that specify crown shape')
 	shadowGroup = EnumProperty(items=availableGroupsOrNone,name='Shadow Group',description='Group of objects subtracted from the crown shape')
 	exclusionGroup = EnumProperty(items=availableGroupsOrNone,name='Exclusion Group',description='Group of objects that will not be penetrated by growing branches')
+	
+	useTrunkGroup = BoolProperty(name="Use trunk group", 
+					description="Use the locations of a group of objects to specify trunk starting points instead of 3d cursor",
+					default=False)
+	
+	trunkGroup = EnumProperty(items=availableGroups,name='Trunk Group',description='Group of objects whose locations specify trunk starting points')
 	
 	crownSize = FloatProperty(name="Crown Size",
 					description="Crown size",
@@ -454,7 +466,14 @@ class SCATree(bpy.types.Operator):
 			volumefie=partial(groupdistribution,self.crownGroup,self.shadowGroup,self.randomSeed,size,minp-bpy.context.scene.cursor_location)
 		else:
 			volumefie=partial(ellipsoid2,self.crownSize*self.crownShape,self.crownSize,Vector((0,0,self.crownSize+self.crownOffset)),self.surfaceBias,self.topBias)
-			
+		
+		startingpoints = []
+		if self.useTrunkGroup:
+			if bpy.data.groups.find(self.trunkGroup)>=0 :
+				for ob in bpy.data.groups[self.trunkGroup].objects :
+					p = ob.location - context.scene.cursor_location
+					startingpoints.append(Branchpoint(p,None))
+					
 		sca = SCA(NBP = self.maxIterations,
 			NENDPOINTS=self.numberOfEndpoints,
 			d=self.internodeLength,
@@ -463,7 +482,8 @@ class SCATree(bpy.types.Operator):
 			SEED=self.randomSeed,
 			TROPISM=self.tropism,
 			volume=volumefie,
-			exclude=lambda p: insidegroup(p, self.exclusionGroup))
+			exclude=lambda p: insidegroup(p, self.exclusionGroup),
+			startingpoints=startingpoints)
 
 		if self.showMarkers:
 			mesh = createMarkers(sca, self.markerScale)
@@ -518,7 +538,11 @@ class SCATree(bpy.types.Operator):
 			newbox.prop(self, 'crownSize')
 			newbox.prop(self, 'crownShape')
 			newbox.prop(self, 'crownOffset')
-
+		newbox = box.box()
+		newbox.prop(self,'useTrunkGroup')
+		if self.useTrunkGroup:
+			newbox.prop(self,'trunkGroup')
+			
 		box.prop(self, 'surfaceBias')
 		box.prop(self, 'topBias')
 		box.prop(self, 'newEndPointsPer1000')

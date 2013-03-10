@@ -33,7 +33,7 @@ class Branchpoint:
 		self.v=Vector(p)
 		self.parent = parent
 		self.connections = 0
-
+		
 def sphere(r,p):
 	r2 = r*r
 	while True:
@@ -101,13 +101,28 @@ class SCA:
 					n+=1
 				sd/=n
 				ll=sqrt(sd.dot(sd))
+				# don't know if this assumption is true:
+				# if the unnormalised direction is very small, the endpoints are nearly coplanar/colinear and at roughly the same distance
+				# so no endpoints will be killed and we might end up adding the same branch again and again
+				if ll < 1e-3 :
+					#print('SD very small')
+					continue
+					
 				sd/=ll
 				sd[2]+=self.TROPISM
 				ll=sqrt(sd.dot(sd))
 				sd/=ll
 			
-				if sd < 1e-7 : print('SD very small')
 				newp = self.branchpoints[bi].v+sd*self.d
+				# the assumption we made earlier is not suffucient to prevent adding the same branch so we need an expensive check:
+				tooclose = False
+				for dbi in self.branchpoints:
+					dddd = newp - dbi.v
+					if dddd.dot(dddd) < 1e-3 :
+						#print('BP to close to another')
+						tooclose = True
+				if tooclose : continue
+				
 				if not self.exclude(newp):
 					bp = Branchpoint(newp,bi)
 					self.branchpoints.append(bp)
@@ -128,5 +143,5 @@ class SCA:
 					endpointsadded+=1
 					t+=expovariate(newendpointsper1000) # time to new 'endpoint add event'
 				
-		if newendpointsper1000 > 0.0:
-			print("newendpoints/iteration %.3f, actual %.3f in %5.f iterations"%(newendpointsper1000,endpointsadded/niterations,niterations))
+		#if newendpointsper1000 > 0.0:
+			#print("newendpoints/iteration %.3f, actual %.3f in %5.f iterations"%(newendpointsper1000,endpointsadded/niterations,niterations))

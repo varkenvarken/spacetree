@@ -22,7 +22,7 @@
 bl_info = {
 	"name": "SCA Tree Generator",
 	"author": "michel anders (varkenvarken)",
-	"version": (0, 0, 5),
+	"version": (0, 0, 6),
 	"blender": (2, 66, 0),
 	"location": "View3D > Add > Mesh",
 	"description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -48,6 +48,9 @@ def availableGroups(self, context):
 def availableGroupsOrNone(self, context):
 	groups = [ ('None', 'None', 'None', 1) ]
 	return groups + [(name, name, name, n+1) for n,name in enumerate(bpy.data.groups.keys())]
+  
+def availableObjects(self, context):
+	return [(name, name, name, n+1) for n,name in enumerate(bpy.data.objects.keys())]
   
 def ellipsoid(r=5,rz=5,p=Vector((0,0,8)),taper=0):
 	r2=r*r
@@ -238,6 +241,44 @@ def createMarkers(tree,scale=0.05):
 	mesh.update(calc_edges=True)
 	return mesh
 
+
+def createObjects(tree, parent=None, objectname=None, probability=0.5, size=0.5, randomsize=0.1, randomrot=0.1, maxconnections=2, bunchiness=1.0):
+
+	if (parent is None) or (objectname is None) or (objectname == 'None') : return
+	
+	# not necessary, we parent the new objects: p=bpy.context.scene.cursor_location
+	
+	theobject = bpy.data.objects[objectname]
+	
+	t=gauss(1.0/probability,0.1)
+	bpswithleaves=0
+	for bp in tree.branchpoints:
+		if bp.connections < maxconnections:
+		
+			dv = tree.branchpoints[bp.parent].v - bp.v if bp.parent else Vector((0,0,0))
+			dvp = Vector((0,0,0))
+			
+			bpswithleaves+=1
+			nleavesonbp=0
+			while t<bpswithleaves:
+				nleavesonbp+=1
+				rx = (random()-0.5)*randomrot*6.283 # TODO vertical tilt in direction of tropism
+				ry = (random()-0.5)*randomrot*6.283
+				rot = Euler((rx,ry,random()*6.283),'ZXY')
+				scale = size+(random()-0.5)*randomsize
+				
+				# add new object and parent it
+				obj = bpy.data.objects.new(objectname,theobject.data)
+				obj.location = bp.v+dvp
+				obj.rotation_mode = 'ZXY'
+				obj.rotation_euler = rot[:]
+				obj.scale = [scale,scale,scale]
+				obj.parent = parent
+				bpy.context.scene.objects.link(obj)
+				
+				t += gauss(1.0/probability,0.1)					 # this is not the best choice of distribution because we might get negative values especially if sigma is large
+				dvp = nleavesonbp*(dv/(probability**bunchiness)) # TODO add some randomness to the offset
+
 def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leafsize=0.5, leafrandomsize=0.1, leafrandomrot=0.1, nomodifiers=False, maxleafconnections=2, bleaf=1.0):
 	
 	p=bpy.context.scene.cursor_location
@@ -344,19 +385,36 @@ class SCATree(bpy.types.Operator):
 					min=0.0001,
 					soft_max=1.0)
 	
-	useGroups = BoolProperty(name="Use object groups", 
+	# the group related properties are not saved as presets because on reload no groups with the same names might exist, causing an exception
+	useGroups = BoolProperty(name="Use object groups",
+					options={'ANIMATABLE','SKIP_SAVE'},
 					description="Use groups of objects to specify marker distribution",
 					default=False)
 	
-	crownGroup = EnumProperty(items=availableGroups,name='Crown Group',description='Group of objects that specify crown shape')
-	shadowGroup = EnumProperty(items=availableGroupsOrNone,name='Shadow Group',description='Group of objects subtracted from the crown shape')
-	exclusionGroup = EnumProperty(items=availableGroupsOrNone,name='Exclusion Group',description='Group of objects that will not be penetrated by growing branches')
+	crownGroup = EnumProperty(items=availableGroups,
+					options={'ANIMATABLE','SKIP_SAVE'},
+					name='Crown Group',
+					description='Group of objects that specify crown shape')
+	
+	shadowGroup = EnumProperty(items=availableGroupsOrNone,
+					options={'ANIMATABLE','SKIP_SAVE'},
+					name='Shadow Group',
+					description='Group of objects subtracted from the crown shape')
+	
+	exclusionGroup = EnumProperty(items=availableGroupsOrNone,
+					options={'ANIMATABLE','SKIP_SAVE'},
+					name='Exclusion Group',
+					description='Group of objects that will not be penetrated by growing branches')
 	
 	useTrunkGroup = BoolProperty(name="Use trunk group", 
+					options={'ANIMATABLE','SKIP_SAVE'},
 					description="Use the locations of a group of objects to specify trunk starting points instead of 3d cursor",
 					default=False)
 	
-	trunkGroup = EnumProperty(items=availableGroups,name='Trunk Group',description='Group of objects whose locations specify trunk starting points')
+	trunkGroup = EnumProperty(items=availableGroups,
+					options={'ANIMATABLE','SKIP_SAVE'},
+					name='Trunk Group',
+					description='Group of objects whose locations specify trunk starting points')
 	
 	crownSize = FloatProperty(name="Crown Size",
 					description="Crown size",
@@ -435,6 +493,42 @@ class SCATree(bpy.types.Operator):
 					default=2,
 					min=0)
 	addLeaves = BoolProperty(name="Add Leaves", default=False)
+	
+	objectName = EnumProperty(items=availableObjects,
+					options={'ANIMATABLE','SKIP_SAVE'},
+					name='Object Name',
+					description='Name of additional objects to duplicate at the branchpoints')
+	pObject = FloatProperty(name="Objects per internode",
+					description=("The average number of objects per internode"),
+					default=0.3,
+					min=0.0,
+					soft_max=1)
+	bObject = FloatProperty(name="Object clustering",
+					description=("How much objects cluster to the end of the internode"),
+					default=1,
+					min=1,
+					soft_max=4)
+	objectSize = FloatProperty(name="Object Size",
+					description=("The object size"),
+					default=1,
+					min=0.0,
+					soft_max=2)
+	objectRandomSize = FloatProperty(name="Object Random Size",
+					description=("The amount of randomness to add to the object size"),
+					default=0.1,
+					min=0.0,
+					soft_max=10)
+	objectRandomRot = FloatProperty(name="Object Random Rotation",
+					description=("The amount of random rotation to add to the object"),
+					default=0.1,
+					min=0.0,
+					soft_max=1)
+	objectMaxConnections = IntProperty(name="Max Connections for Object",
+					description="The maximum number of connections of an internode elegible for a object",
+					default=1,
+					min=0)
+	addObjects = BoolProperty(name="Add Objects", default=False)
+	
 	updateTree = BoolProperty(name="Update Tree", default=False)
 	noModifiers = BoolProperty(name="No Modifers", default=True)
 	showMarkers = BoolProperty(name="Show Markers", default=False)
@@ -450,7 +544,7 @@ class SCATree(bpy.types.Operator):
 		return context.mode == 'OBJECT'
 
 	def execute(self, context):
-		print("execute")
+		
 		if not self.updateTree:
 			return {'PASS_THROUGH'}
 
@@ -494,6 +588,16 @@ class SCATree(bpy.types.Operator):
 		
 		obj_new=createGeometry(sca,self.power,self.scale,self.addLeaves, self.pLeaf, self.leafSize, self.leafRandomSize, self.leafRandomRot, self.noModifiers, self.leafMaxConnections, self.bLeaf)
 		
+		if self.addObjects:
+			createObjects(sca, obj_new,
+				objectname=self.objectName,
+				probability=self.pObject,
+				size=self.objectSize,
+				randomsize=self.objectRandomSize,
+				randomrot=self.objectRandomRot,
+				maxconnections=self.objectMaxConnections,
+				bunchiness=self.bObject)
+			
 		if self.showMarkers:
 			obj_markers.parent = obj_new
 		
@@ -558,6 +662,18 @@ class SCATree(bpy.types.Operator):
 			box.prop(self,'leafRandomRot')
 			box.prop(self,'leafMaxConnections')
 		
+		layout.prop(self,'addObjects', icon='MESH_DATA')
+		if self.addObjects:
+			box = layout.box()
+			box.label("Object Settings:")
+			box.prop(self,'objectName')
+			box.prop(self,'pObject')
+			box.prop(self,'bObject')
+			box.prop(self,'objectSize')
+			box.prop(self,'objectRandomSize')
+			box.prop(self,'objectRandomRot')
+			box.prop(self,'objectMaxConnections')
+
 		box = layout.box()
 		box.label("Debug Settings:")
 		box.prop(self, 'noModifiers')

@@ -22,7 +22,7 @@
 bl_info = {
 	"name": "SCA Tree Generator",
 	"author": "michel anders (varkenvarken)",
-	"version": (0, 0, 6),
+	"version": (0, 0, 7),
 	"blender": (2, 66, 0),
 	"location": "View3D > Add > Mesh",
 	"description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -31,27 +31,28 @@ bl_info = {
 	"tracker_url": "",
 	"category": "Add Mesh"}
 
-
+from time import time
 from random import random,gauss
 from functools import partial
 from math import sin,cos
 
 import bpy
 from bpy.props import FloatProperty, IntProperty, BoolProperty, EnumProperty
-from mathutils import Vector,Euler,Matrix
+from mathutils import Vector,Euler,Matrix,Quaternion
 
+from .simplefork import simplefork, simplefork2, quadfork, bridgequads # simple skinning algorithm building blocks
 from .sca import SCA, Branchpoint # the core class that implements the space colonization algorithm and the definition of a segment
 
 def availableGroups(self, context):
 	return [(name, name, name, n) for n,name in enumerate(bpy.data.groups.keys())]
-  
+
 def availableGroupsOrNone(self, context):
 	groups = [ ('None', 'None', 'None', 1) ]
 	return groups + [(name, name, name, n+1) for n,name in enumerate(bpy.data.groups.keys())]
-  
+
 def availableObjects(self, context):
 	return [(name, name, name, n+1) for n,name in enumerate(bpy.data.objects.keys())]
-  
+
 def ellipsoid(r=5,rz=5,p=Vector((0,0,8)),taper=0):
 	r2=r*r
 	z2=rz*rz
@@ -109,7 +110,7 @@ def halton3D(index):
 	more evenly distributed then pseudo random sequences. 
 	See en.m.wikipedia.org/wiki/Halton_sequence
 	"""
-  
+
 	def halton(index, base):
 		result=0
 		f=1.0/base
@@ -127,7 +128,7 @@ def insidegroup(pointrelativetocursor, group):
 		if pointInsideMesh(pointrelativetocursor,ob):
 			return True
 	return False
-  
+
 def groupdistribution(crowngroup,shadowgroup=None,seed=0,size=Vector((1,1,1)),pointrelativetocursor=Vector((0,0,0))):
 	if crowngroup == shadowgroup:
 		shadowgroup = None # safeguard otherwise every marker would be rejected
@@ -279,27 +280,258 @@ def createObjects(tree, parent=None, objectname=None, probability=0.5, size=0.5,
 				t += gauss(1.0/probability,0.1)					 # this is not the best choice of distribution because we might get negative values especially if sigma is large
 				dvp = nleavesonbp*(dv/(probability**bunchiness)) # TODO add some randomness to the offset
 
-def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leafsize=0.5, leafrandomsize=0.1, leafrandomrot=0.1, nomodifiers=False, maxleafconnections=2, bleaf=1.0):
+def bridge(loopa, loopb, verts):
+	#loops should be equal length tris but we don't check
+	#first determine indices of closest verts
+	#print('bridge',loopa,loopb)
+	#print([verts[i] for i in loopa])
+	#print([verts[i] for i in loopb])
+	mind=None
+	mina=0
+	minb=0
+	for ia,a in enumerate(loopa):
+		for ib,b in enumerate(loopb):
+			d=verts[b]-verts[a]
+			d=d.dot(d)
+			if mind is None or d<mind:
+				mind=d
+				mina=ia
+				minb=ib
+	a1=loopa[mina]
+	b1=loopb[minb]
+	#derive the indices of the other verts
+	a2=loopa[(mina-1)%3]
+	a3=loopa[(mina+1)%3]
+	b2=loopb[(minb-1)%3]
+	b3=loopb[(minb+1)%3]
+	# determine least warped quad config (and prevent bowtie)
+	v0=verts[a3]-verts[a2]
+	v1=verts[b3]-verts[a3]
+	v2=verts[b2]-verts[b3]
+	n0=v0.cross(v1)
+	n1=v1.cross(v2)
+	n2=v1.cross(-v2)
+	if n0.angle(n1) < n0.angle(n2):
+		t = ((a1,a2,a3),(b1,b2,b3))
+	else:
+		t = ((a1,a2,a3),(b1,b3,b2))
+	#print(t)
+	return t
+	
+def vertextend(v,dv):
+	n=len(v)
+	v.extend(dv)
+	return tuple(range(n,n+len(dv)))
+
+def vertcopy(loopa, v, p):
+	dv=[v[i]+p for i in loopa]
+	#print(loopa,p,dv)
+	return vertextend(v,dv)
+
+def bend(p0, p1, p2, loopa, loopb, verts):
+	# will extend this with a tri centered at p0
+	#print('bend')
+	return bridgequads(loopa, loopb, verts)
+
+def extend(p0, p1, p2, loopa, verts):
+	# will extend this with a tri centered at p0
+	#print('extend')
+	#print(p0,p1,p2,[verts[i] for i in loopa])
+	
+	# both difference point upward, we extend to the second
+	d1=p1-p0
+	d2=p0-p2
+	p=(verts[loopa[0]]+verts[loopa[1]]+verts[loopa[2]]+verts[loopa[3]])/4
+	a=d1.angle(d2,0)
+	if abs(a)<0.05:
+		#print('small angle')
+		loopb = vertcopy(loopa, verts, p0-d2/2-p)
+		# all verts in loopb are displaced the same amount so no need to find the minimum distance
+		n=4
+		return ([(loopa[(i)%n], loopa[(i+1)%n], loopb[(i+1)%n], loopb[(i)%n]) for i in range(n)] ,loopa, loopb)
+
+	r=d2.cross(d1)
+	q=Quaternion(r,-a)
+	dverts=[verts[i]-p for i in loopa]
+	#print('large angle',dverts,'axis',r)
+	for dv in dverts:
+		dv.rotate(q)
+	#print('rotated',dverts)
+	for dv in dverts:
+		dv+=(p0-d2/2)
+	#print('moved',dverts)
+	loopb=vertextend(verts,dverts)
+	# none of the verts in loopb are rotated so no need to find the minimum distance
+	n=4
+	return ([(loopa[(i)%n], loopa[(i+1)%n], loopb[(i+1)%n], loopb[(i)%n]) for i in range(n)] ,loopa, loopb)
+
+def nonfork(bp,parent,apex,verts,p,branchpoints):
+	#print('nonfork bp    ',bp.index,bp.v,bp.loop if hasattr(bp,'loop') else None)
+	#print('nonfork parent',parent.index,parent.v,parent.loop if hasattr(parent,'loop') else None)
+	#print('nonfork apex  ',apex.index,apex.v,apex.loop if hasattr(apex,'loop') else None)
+	if hasattr(bp,'loop'):
+		if hasattr(apex,'loop'):
+			#print('nonfork bend bp->apex')
+			return bend(bp.v+p, parent.v+p, apex.v+p, bp.loop, apex.loop, verts)
+		else:
+			#print('nonfork extend bp->apex')
+			faces,loop1,loop2 = extend(bp.v+p, parent.v+p, apex.v+p, bp.loop, verts)
+			apex.loop = loop2
+			return faces,loop1,loop2
+	else:
+		if hasattr(parent,'loop'):
+			#print('nonfork extend from bp->parent')
+			#faces,loop1,loop2 =  extend(bp.v+p, apex.v+p, parent.v+p, parent.loop, verts)
+			if parent.parent is None :
+				return None, None, None
+			grandparent=branchpoints[parent.parent]
+			faces,loop1,loop2 =  extend(grandparent.v+p, parent.v+p, bp.v+p, parent.loop, verts)
+			bp.loop = loop2
+			return faces,loop1,loop2
+		else:
+			#print('nonfork no loop')
+			# neither parent nor apex already have a loop calculated
+			# will fill this later ...
+			return None,None,None
+
+def endpoint(bp,parent,verts,p):
+	# extrapolate to tip of branch. we do not close the tip for now
+	faces,loop1,loop2 = extend(bp.v+p, parent.v+p, bp.v+(bp.v-parent.v)+p, bp.loop, verts)
+	return faces,loop1,loop2
+
+def root(bp,apex,verts,p):
+	# extrapolate non-forked roots
+	faces,loop1,loop2 = extend(bp.v+p, bp.v-(apex.v-bp.v)+p, apex.v+p, bp.loop, verts)
+	apex.loop=loop2
+	return faces,loop1,loop2
+
+def skin(aloop, bloop, faces):
+	n = len(aloop)
+	for i in range(n):
+		faces.append((aloop[i],aloop[(i+1)%n],bloop[(i+1)%n],bloop[i]))
+			
+def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leafsize=0.5, leafrandomsize=0.1, leafrandomrot=0.1,
+	nomodifiers=True, skinmethod='NATIVE', subsurface=False,
+	maxleafconnections=2, bleaf=1.0,
+	timeperf=True):
+	
+	timings = { 'start': time() }
 	
 	p=bpy.context.scene.cursor_location
 	verts=[]
 	edges=[]
+	faces=[]
 	radii=[]
 	roots=set()
 	
 	# Loop over all branchpoints and create connected edges
-	for bp in tree.branchpoints:
+	for n,bp in enumerate(tree.branchpoints):
 		verts.append(bp.v+p)
 		radii.append(bp.connections)
+		bp.index=n
 		if not (bp.parent is None) :
 			edges.append((len(verts)-1,bp.parent))
 		else :
-			roots.add(len(verts)-1)
-			
+			nv=len(verts)
+			roots.add(nv-1)
+	
+	timings['skeleton']=(time()-timings['start'])
+	
+	# native skinning method
+	if nomodifiers == False and skinmethod == 'NATIVE': 
+		# add a quad edge loop to all roots
+		for r in roots:
+			rootp=verts[r]
+			nv=len(verts)
+			radius = 0.7071*((tree.branchpoints[r].connections+1)**power)*scale
+			verts.extend( [rootp+Vector((-radius,-radius,0)),rootp+Vector((radius,-radius,0)),rootp+Vector((radius,radius,0)),rootp+Vector((-radius,radius,0))])
+			tree.branchpoints[r].loop=(nv,nv+1,nv+2,nv+3)
+			#print('root verts',tree.branchpoints[r].loop)
+			#faces.append((nv,nv+1,nv+2))
+			edges.extend([(nv,nv+1),(nv+1,nv+2),(nv+2,nv+3),(nv+3,nv)])
+		
+		# skin all forked branchpoints, no attempt is yet made to adjust the radius
+		forkfork=set()
+		for bpi,bp in enumerate(tree.branchpoints):
+			if not( bp.apex is None or bp.shoot is None) :
+				apex = tree.branchpoints[bp.apex]
+				shoot = tree.branchpoints[bp.shoot]
+				p0 = bp.v
+				r0 = ((bp.connections+1)**power)*scale
+				p2 = apex.v
+				r2 = ((apex.connections+1)**power)*scale
+				p3 = shoot.v
+				r3 = ((shoot.connections+1)**power)*scale
+				
+				if bp.parent is not None:
+					parent = tree.branchpoints[bp.parent] 
+					p1 = parent.v
+					r1 = (parent.connections**power)*scale
+				else:
+					p1 = p0-(p2-p0)
+					r1=r0
+				
+				skinverts,skinfaces = quadfork(p0,p1,p2,p3,r0,r1,r2,r3)
+				nv=len(verts)
+				verts.extend([v+p for v in skinverts])
+				faces.extend([ tuple(v+nv for v in f) for f in skinfaces])
+				
+				# the vertices of the quads at the end of the internodes are returned as the first 12 vertices of a total of 22
+				# we store them for reuse by non-forked internodes but first check if we have a fork to fork connection
+				nv=len(verts)
+				if hasattr(bp,'loop') and not (bpi in forkfork) : # already assigned by another fork
+					faces.extend(bridgequads(bp.loop, [nv-22,nv-21,nv-20,nv-19], verts )[0])
+					forkfork.add(bpi)
+				else:
+					bp.loop = [nv-22,nv-21,nv-20,nv-19]
+					
+				if hasattr(apex,'loop') and not (bp.apex in forkfork) : # already assigned by another fork but not yet skinned
+					faces.extend(bridgequads(apex.loop, [nv-18,nv-17,nv-16,nv-15], verts )[0])
+					forkfork.add(bp.apex)
+				else:
+					apex.loop = [nv-18,nv-17,nv-16,nv-15]
+					
+				if hasattr(shoot,'loop') and not (bp.shoot in forkfork) : # already assigned by another fork but not yet skinned
+					faces.extend(bridgequads(shoot.loop, [nv-14,nv-13,nv-12,nv-11], verts )[0])
+					forkfork.add(bp.shoot)
+				else:
+					shoot.loop = [nv-14,nv-13,nv-12,nv-11]
+		
+		# skin the roots that are not forks
+		for r in roots:
+			bp=tree.branchpoints[r]
+			if bp.apex is not None and bp.parent is None and bp.shoot is None:
+				bfaces, apexloop, parentloop = root(bp,tree.branchpoints[bp.apex],verts,p)
+				if bfaces is not None:
+					faces.extend(bfaces)
+				
+		# skin all non-forking branchpoints, that is those not a root or and endpoint
+		skinnednonforks=set()
+		start=-1
+		while(start != len(skinnednonforks)):
+			start = len(skinnednonforks)
+			#print('-'*20,start)
+			for bp in tree.branchpoints:
+				if bp.shoot is None and not (bp.parent is None or bp.apex is None or bp in skinnednonforks) :
+					bfaces, apexloop, parentloop = nonfork(bp,tree.branchpoints[bp.parent],tree.branchpoints[bp.apex],verts,p,tree.branchpoints)
+					if bfaces is not None:
+						#print(bfaces,apexloop,parentloop)
+						faces.extend(bfaces)
+						skinnednonforks.add(bp)
+		
+		# skin endpoints
+		for bp in tree.branchpoints:
+			if bp.apex is None and bp.parent is not None:
+				bfaces, apexloop, parentloop = endpoint(bp,tree.branchpoints[bp.parent],verts,p)
+				if bfaces is not None:
+					faces.extend(bfaces)
+	# end of native skinning section
+	timings['nativeskin']=(time()-timings['start']-timings['skeleton'])
+	
 	# create the tree mesh
 	mesh = bpy.data.meshes.new('Tree')
-	mesh.from_pydata(verts, edges, [])
-	mesh.update()
+	mesh.from_pydata(verts, edges, faces)
+	mesh.update(calc_edges=True)
 	
 	# create the tree object an make it the only selected and active object in the scene
 	obj_new = bpy.data.objects.new(mesh.name, mesh)
@@ -310,30 +542,36 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
 	bpy.context.scene.objects.active = obj_new
 	bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
 	
-	# add a subsurf modifier to smooth the branches
+	timings['createmesh']=(time()-timings['start']-timings['skeleton']-timings['nativeskin'])
+	
+	# add a subsurf modifier to smooth the branches 
 	if nomodifiers == False:
-		bpy.ops.object.modifier_add(type='SUBSURF')
-		bpy.context.active_object.modifiers[0].levels = 1
-		bpy.context.active_object.modifiers[0].render_levels = 1
+		if subsurface:
+			bpy.ops.object.modifier_add(type='SUBSURF')
+			bpy.context.active_object.modifiers[0].levels = 1
+			bpy.context.active_object.modifiers[0].render_levels = 1
 
 		# add a skin modifier
-		bpy.ops.object.modifier_add(type='SKIN')
-		bpy.context.active_object.modifiers[1].use_smooth_shade=True
-		bpy.context.active_object.modifiers[1].use_x_symmetry=True
-		bpy.context.active_object.modifiers[1].use_y_symmetry=True
-		bpy.context.active_object.modifiers[1].use_z_symmetry=True
+		if skinmethod == 'BLENDER':
+			bpy.ops.object.modifier_add(type='SKIN')
+			bpy.context.active_object.modifiers[-1].use_smooth_shade=True
+			bpy.context.active_object.modifiers[-1].use_x_symmetry=True
+			bpy.context.active_object.modifiers[-1].use_y_symmetry=True
+			bpy.context.active_object.modifiers[-1].use_z_symmetry=True
 
-		skinverts = bpy.context.active_object.data.skin_vertices[0].data
+			skinverts = bpy.context.active_object.data.skin_vertices[0].data
 
-		for i,v in enumerate(skinverts):
-			v.radius = [(radii[i]**power)*scale,(radii[i]**power)*scale]
-			if i in roots:
-				v.use_root = True
-		
-		# add a subsurf modifier to smooth the skin
-		bpy.ops.object.modifier_add(type='SUBSURF')
-		bpy.context.active_object.modifiers[2].levels = 0
-		bpy.context.active_object.modifiers[2].render_levels = 2
+			for i,v in enumerate(skinverts):
+				v.radius = [(radii[i]**power)*scale,(radii[i]**power)*scale]
+				if i in roots:
+					v.use_root = True
+			
+			# add an extra subsurf modifier to smooth the skin
+			bpy.ops.object.modifier_add(type='SUBSURF')
+			bpy.context.active_object.modifiers[-1].levels = 1
+			bpy.context.active_object.modifiers[-1].render_levels = 2
+	
+	timings['modifiers']=(time()-timings['start']-timings['skeleton']-timings['nativeskin']-timings['createmesh'])
 
 	# create the leaves object
 	if addleaves:
@@ -344,6 +582,13 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
 		bpy.context.scene.objects.active = obj_leaves
 		bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
 		bpy.context.scene.objects.active = obj_new
+	
+	timings['leaves']=(time()-timings['start']-timings['skeleton']-timings['nativeskin']-timings['createmesh']-timings['modifiers'])
+	
+	if timeperf:
+		for key,value in timings.items():
+			if key != 'start':
+				print("%-19s %6.2fs"%(key,value))
 		
 	return obj_new
 	
@@ -530,13 +775,21 @@ class SCATree(bpy.types.Operator):
 	addObjects = BoolProperty(name="Add Objects", default=False)
 	
 	updateTree = BoolProperty(name="Update Tree", default=False)
+	
 	noModifiers = BoolProperty(name="No Modifers", default=True)
+	subSurface = BoolProperty(name="Sub Surface", default=False, description="Add subsurface modifier to trunk skin")
+	skinMethod = EnumProperty(items=[('NATIVE','Native','Built in skinning method',1),('BLENDER','Skin modifier','Use Blenders skin modifier',2)],
+					options={'ANIMATABLE','SKIP_SAVE'},
+					name='Skinning method',
+					description='How to add a surface to the trunk skeleton')
+	
 	showMarkers = BoolProperty(name="Show Markers", default=False)
 	markerScale = FloatProperty(name="Marker Scale",
 					description=("The size of the markers"),
 					default=0.05,
 					min=0.001,
 					soft_max=0.2)
+	timePerformance = BoolProperty(name="Time performance", default=False, description="Show duration of generation steps on console")
 	
 	@classmethod
 	def poll(self, context):
@@ -548,6 +801,8 @@ class SCATree(bpy.types.Operator):
 		if not self.updateTree:
 			return {'PASS_THROUGH'}
 
+		start=time()
+		
 		# necessary otherwize ray casts toward these objects may fail. However if nothing is selected, we get a runtime error ...
 		try:
 			bpy.ops.object.mode_set(mode='EDIT', toggle=False)
@@ -567,7 +822,8 @@ class SCATree(bpy.types.Operator):
 				for ob in bpy.data.groups[self.trunkGroup].objects :
 					p = ob.location - context.scene.cursor_location
 					startingpoints.append(Branchpoint(p,None))
-					
+		
+		scastart=time()
 		sca = SCA(NBP = self.maxIterations,
 			NENDPOINTS=self.numberOfEndpoints,
 			d=self.internodeLength,
@@ -578,7 +834,8 @@ class SCATree(bpy.types.Operator):
 			volume=volumefie,
 			exclude=lambda p: insidegroup(p, self.exclusionGroup),
 			startingpoints=startingpoints)
-
+		scaend=time()-scastart
+			
 		if self.showMarkers:
 			mesh = createMarkers(sca, self.markerScale)
 			obj_markers = bpy.data.objects.new(mesh.name, mesh)
@@ -586,8 +843,12 @@ class SCATree(bpy.types.Operator):
 		
 		sca.iterate(newendpointsper1000=self.newEndPointsPer1000,maxtime=self.maxTime)
 		
-		obj_new=createGeometry(sca,self.power,self.scale,self.addLeaves, self.pLeaf, self.leafSize, self.leafRandomSize, self.leafRandomRot, self.noModifiers, self.leafMaxConnections, self.bLeaf)
+		obj_new=createGeometry(sca,self.power,self.scale,self.addLeaves, self.pLeaf, self.leafSize, self.leafRandomSize, self.leafRandomRot,
+			self.noModifiers, self.skinMethod, self.subSurface,
+			self.leafMaxConnections, self.bLeaf,
+			self.timePerformance)
 		
+		startobjcreation=time()
 		if self.addObjects:
 			createObjects(sca, obj_new,
 				objectname=self.objectName,
@@ -597,11 +858,18 @@ class SCATree(bpy.types.Operator):
 				randomrot=self.objectRandomRot,
 				maxconnections=self.objectMaxConnections,
 				bunchiness=self.bObject)
-			
+		endobjcreation=time()-startobjcreation
+		
 		if self.showMarkers:
 			obj_markers.parent = obj_new
 		
 		self.updateTree = False
+		
+		if self.timePerformance:
+			print("endpoint generation %6.2fs"%scaend)
+			print("object creation     %6.2fs"%endobjcreation)
+			print("total time          %6.2fs"%(time()-start))
+			
 		return {'FINISHED'}
 
 	def draw(self, context):
@@ -609,12 +877,16 @@ class SCATree(bpy.types.Operator):
 
 		layout.prop(self, 'updateTree', icon='MESH_DATA')
 
-		box = layout.box()
+		columns=layout.row()
+		col1=columns.column()
+		col2=columns.column()
+		
+		box = col1.box()
 		box.label("Generation Settings:")
 		box.prop(self, 'randomSeed')
 		box.prop(self, 'maxIterations')
 
-		box = layout.box()
+		box = col1.box()
 		box.label("Shape Settings:")
 		box.prop(self, 'numberOfEndpoints')
 		box.prop(self, 'internodeLength')
@@ -624,7 +896,7 @@ class SCATree(bpy.types.Operator):
 		box.prop(self, 'scale')
 		box.prop(self, 'tropism')
 		
-		newbox = box.box()
+		newbox = col2.box()
 		newbox.label("Crown shape")
 		newbox.prop(self,'useGroups')
 		if self.useGroups:
@@ -642,7 +914,7 @@ class SCATree(bpy.types.Operator):
 			newbox.prop(self, 'crownSize')
 			newbox.prop(self, 'crownShape')
 			newbox.prop(self, 'crownOffset')
-		newbox = box.box()
+		newbox = col2.box()
 		newbox.prop(self,'useTrunkGroup')
 		if self.useTrunkGroup:
 			newbox.prop(self,'trunkGroup')
@@ -650,6 +922,13 @@ class SCATree(bpy.types.Operator):
 		box.prop(self, 'surfaceBias')
 		box.prop(self, 'topBias')
 		box.prop(self, 'newEndPointsPer1000')
+		
+		box = col2.box()
+		box.label("Skin options:")
+		box.prop(self, 'noModifiers')
+		if not self.noModifiers:
+			box.prop(self,'skinMethod')
+			box.prop(self,'subSurface')
 		
 		layout.prop(self, 'addLeaves', icon='MESH_DATA')
 		if self.addLeaves:
@@ -676,9 +955,10 @@ class SCATree(bpy.types.Operator):
 
 		box = layout.box()
 		box.label("Debug Settings:")
-		box.prop(self, 'noModifiers')
 		box.prop(self, 'showMarkers')
-		box.prop(self, 'markerScale')
+		if self.showMarkers:
+			box.prop(self, 'markerScale')
+		box.prop(self, 'timePerformance')
 		
 def menu_func(self, context):
 	self.layout.operator(SCATree.bl_idname, text="Add Tree to Scene",

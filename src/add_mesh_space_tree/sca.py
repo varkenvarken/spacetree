@@ -33,6 +33,8 @@ class Branchpoint:
 		self.v=Vector(p)
 		self.parent = parent
 		self.connections = 0
+		self.apex = None
+		self.shoot = None
 		
 def sphere(r,p):
 	r2 = r*r
@@ -82,7 +84,7 @@ class SCA:
 					ddd = ddd.dot(ddd)
 					if ddd < self.KILLDIST:
 						kill.add(ei)
-					elif (ddd<self.INFLUENCE) and ((distance is None) or (ddd < distance)):
+					elif (ddd<self.INFLUENCE and b.shoot is None) and ((distance is None) or (ddd < distance)):
 						closestbp = bi
 						distance = ddd
 				if not (closestbp is None):
@@ -126,8 +128,13 @@ class SCA:
 				if not self.exclude(newp):
 					bp = Branchpoint(newp,bi)
 					self.branchpoints.append(bp)
+					nbpi = len(self.branchpoints)-1
 					bp = self.branchpoints[bi]
 					bp.connections+=1
+					if bp.apex is None:
+						bp.apex = nbpi
+					else:
+						bp.shoot = nbpi
 					while not (bp.parent is None):
 						bp = self.branchpoints[bp.parent]
 						bp.connections+=1

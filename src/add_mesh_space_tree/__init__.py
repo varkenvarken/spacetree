@@ -22,7 +22,7 @@
 bl_info = {
 	"name": "SCA Tree Generator",
 	"author": "michel anders (varkenvarken)",
-	"version": (0, 0, 7),
+	"version": (0, 0, 8),
 	"blender": (2, 66, 0),
 	"location": "View3D > Add > Mesh",
 	"description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -42,6 +42,7 @@ from mathutils import Vector,Euler,Matrix,Quaternion
 
 from .simplefork import simplefork, simplefork2, quadfork, bridgequads # simple skinning algorithm building blocks
 from .sca import SCA, Branchpoint # the core class that implements the space colonization algorithm and the definition of a segment
+from .timer import Timer
 
 def availableGroups(self, context):
 	return [(name, name, name, n) for n,name in enumerate(bpy.data.groups.keys())]
@@ -280,44 +281,6 @@ def createObjects(tree, parent=None, objectname=None, probability=0.5, size=0.5,
 				t += gauss(1.0/probability,0.1)					 # this is not the best choice of distribution because we might get negative values especially if sigma is large
 				dvp = nleavesonbp*(dv/(probability**bunchiness)) # TODO add some randomness to the offset
 
-def bridge(loopa, loopb, verts):
-	#loops should be equal length tris but we don't check
-	#first determine indices of closest verts
-	#print('bridge',loopa,loopb)
-	#print([verts[i] for i in loopa])
-	#print([verts[i] for i in loopb])
-	mind=None
-	mina=0
-	minb=0
-	for ia,a in enumerate(loopa):
-		for ib,b in enumerate(loopb):
-			d=verts[b]-verts[a]
-			d=d.dot(d)
-			if mind is None or d<mind:
-				mind=d
-				mina=ia
-				minb=ib
-	a1=loopa[mina]
-	b1=loopb[minb]
-	#derive the indices of the other verts
-	a2=loopa[(mina-1)%3]
-	a3=loopa[(mina+1)%3]
-	b2=loopb[(minb-1)%3]
-	b3=loopb[(minb+1)%3]
-	# determine least warped quad config (and prevent bowtie)
-	v0=verts[a3]-verts[a2]
-	v1=verts[b3]-verts[a3]
-	v2=verts[b2]-verts[b3]
-	n0=v0.cross(v1)
-	n1=v1.cross(v2)
-	n2=v1.cross(-v2)
-	if n0.angle(n1) < n0.angle(n2):
-		t = ((a1,a2,a3),(b1,b2,b3))
-	else:
-		t = ((a1,a2,a3),(b1,b3,b2))
-	#print(t)
-	return t
-	
 def vertextend(v,dv):
 	n=len(v)
 	v.extend(dv)
@@ -415,7 +378,7 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
 	maxleafconnections=2, bleaf=1.0,
 	timeperf=True):
 	
-	timings = { 'start': time() }
+	timings = Timer()
 	
 	p=bpy.context.scene.cursor_location
 	verts=[]
@@ -435,7 +398,7 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
 			nv=len(verts)
 			roots.add(nv-1)
 	
-	timings['skeleton']=(time()-timings['start'])
+	timings.add('skeleton')
 	
 	# native skinning method
 	if nomodifiers == False and skinmethod == 'NATIVE': 
@@ -526,7 +489,7 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
 				if bfaces is not None:
 					faces.extend(bfaces)
 	# end of native skinning section
-	timings['nativeskin']=(time()-timings['start']-timings['skeleton'])
+	timings.add('nativeskin')
 	
 	# create the tree mesh
 	mesh = bpy.data.meshes.new('Tree')
@@ -542,7 +505,7 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
 	bpy.context.scene.objects.active = obj_new
 	bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
 	
-	timings['createmesh']=(time()-timings['start']-timings['skeleton']-timings['nativeskin'])
+	timings.add('createmesh')
 	
 	# add a subsurf modifier to smooth the branches 
 	if nomodifiers == False:
@@ -571,7 +534,7 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
 			bpy.context.active_object.modifiers[-1].levels = 1
 			bpy.context.active_object.modifiers[-1].render_levels = 2
 	
-	timings['modifiers']=(time()-timings['start']-timings['skeleton']-timings['nativeskin']-timings['createmesh'])
+	timings.add('modifiers')
 
 	# create the leaves object
 	if addleaves:
@@ -583,12 +546,10 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
 		bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
 		bpy.context.scene.objects.active = obj_new
 	
-	timings['leaves']=(time()-timings['start']-timings['skeleton']-timings['nativeskin']-timings['createmesh']-timings['modifiers'])
+	timings.add('leaves')
 	
 	if timeperf:
-		for key,value in timings.items():
-			if key != 'start':
-				print("%-19s %6.2fs"%(key,value))
+		print(timings)
 		
 	return obj_new
 	
@@ -606,7 +567,7 @@ class SCATree(bpy.types.Operator):
 					unit='LENGTH')
 	killDistance = FloatProperty(name="Kill Distance",
 					description="Kill Distance as a multiple of the internode length",
-					default=5,
+					default=3,
 					min=0.01,
 					soft_max=100.0)
 	influenceRange = FloatProperty(name="Influence Range",
@@ -801,7 +762,7 @@ class SCATree(bpy.types.Operator):
 		if not self.updateTree:
 			return {'PASS_THROUGH'}
 
-		start=time()
+		timings=Timer()
 		
 		# necessary otherwize ray casts toward these objects may fail. However if nothing is selected, we get a runtime error ...
 		try:
@@ -823,7 +784,7 @@ class SCATree(bpy.types.Operator):
 					p = ob.location - context.scene.cursor_location
 					startingpoints.append(Branchpoint(p,None))
 		
-		scastart=time()
+		timings.add('scastart')
 		sca = SCA(NBP = self.maxIterations,
 			NENDPOINTS=self.numberOfEndpoints,
 			d=self.internodeLength,
@@ -834,21 +795,23 @@ class SCATree(bpy.types.Operator):
 			volume=volumefie,
 			exclude=lambda p: insidegroup(p, self.exclusionGroup),
 			startingpoints=startingpoints)
-		scaend=time()-scastart
+		timings.add('sca')
 			
 		if self.showMarkers:
 			mesh = createMarkers(sca, self.markerScale)
 			obj_markers = bpy.data.objects.new(mesh.name, mesh)
 			base = bpy.context.scene.objects.link(obj_markers)
+		timings.add('showmarkers')
 		
-		sca.iterate(newendpointsper1000=self.newEndPointsPer1000,maxtime=self.maxTime)
+		sca.iterate2(newendpointsper1000=self.newEndPointsPer1000,maxtime=self.maxTime)
+		timings.add('iterate')
 		
 		obj_new=createGeometry(sca,self.power,self.scale,self.addLeaves, self.pLeaf, self.leafSize, self.leafRandomSize, self.leafRandomRot,
 			self.noModifiers, self.skinMethod, self.subSurface,
 			self.leafMaxConnections, self.bLeaf,
 			self.timePerformance)
 		
-		startobjcreation=time()
+		timings.add('objcreationstart')
 		if self.addObjects:
 			createObjects(sca, obj_new,
 				objectname=self.objectName,
@@ -858,7 +821,7 @@ class SCATree(bpy.types.Operator):
 				randomrot=self.objectRandomRot,
 				maxconnections=self.objectMaxConnections,
 				bunchiness=self.bObject)
-		endobjcreation=time()-startobjcreation
+		timings.add('objcreation')
 		
 		if self.showMarkers:
 			obj_markers.parent = obj_new
@@ -866,9 +829,8 @@ class SCATree(bpy.types.Operator):
 		self.updateTree = False
 		
 		if self.timePerformance:
-			print("endpoint generation %6.2fs"%scaend)
-			print("object creation     %6.2fs"%endobjcreation)
-			print("total time          %6.2fs"%(time()-start))
+			timings.add('Total')
+			print(timings)
 			
 		return {'FINISHED'}
 

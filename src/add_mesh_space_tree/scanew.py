@@ -150,6 +150,14 @@ class SCA:
     self.branchpoints=[]
     for bp,bpp in zip(self.bp, self.bpp):
         self.branchpoints.append(Branchpoint(bp, bpp))
+        # note that we do not actually discriminate betwee apex and sideshoot, the first to connect is the apex
+        if bpp is not None:
+            parent = self.branchpoints[bpp]
+            if parent.apex is None:
+                parent.apex = self.branchpoints[-1]
+            else:
+                parent.shoot = self.branchpoints[-1]
+
     for bp in self.branchpoints:
         bpp = bp
         while bpp.parent is not None:

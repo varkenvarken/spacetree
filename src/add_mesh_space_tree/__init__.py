@@ -280,30 +280,31 @@ def createObjects(tree, parent=None, objectname=None, probability=0.5, size=0.5,
                 t += gauss(1.0/probability,0.1)					 # this is not the best choice of distribution because we might get negative values especially if sigma is large
                 dvp = nleavesonbp*(dv/(probability**bunchiness)) # TODO add some randomness to the offset
 
-def basictri(bp, verts, power, scale):
+def basictri(bp, verts, power, scale, p):
+    v = bp.v + p
     nv = len(verts)
     r=(bp.connections**power)*scale
-    a=-0.1*r
-    b=0.05*r
-    c=0.05*r
-    verts.extend([bp.v+Vector((a,0,0)), bp.v+Vector((b,-c,0)), bp.v+Vector((b,c,0))]) # provisional, should become an optimally rotated triangle
+    a=-r
+    b=r*0.5   # cos(60)
+    c=r*0.866 # sin(60)
+    verts.extend([v+Vector((a,0,0)), v+Vector((b,-c,0)), v+Vector((b,c,0))]) # provisional, should become an optimally rotated triangle
     return (nv, nv+1, nv+2)
     
-def _simpleskin(bp, loop, verts, faces, power, scale):
-    newloop = basictri(bp, verts, power, scale)
+def _simpleskin(bp, loop, verts, faces, power, scale, p):
+    newloop = basictri(bp, verts, power, scale, p)
     for i in range(3):
         faces.append((loop[i],loop[(i+1)%3],newloop[(i+1)%3],newloop[i]))
     if bp.apex:
-        _simpleskin(bp.apex, newloop, verts, faces, power, scale)
+        _simpleskin(bp.apex, newloop, verts, faces, power, scale, p)
     if bp.shoot:
-        _simpleskin(bp.shoot, newloop, verts, faces, power, scale)
+        _simpleskin(bp.shoot, newloop, verts, faces, power, scale, p)
     
-def simpleskin(bp, verts, faces, power, scale):
-    loop = basictri(bp, verts, power, scale)
+def simpleskin(bp, verts, faces, power, scale, p):
+    loop = basictri(bp, verts, power, scale, p)
     if bp.apex:
-        _simpleskin(bp.apex, loop, verts, faces, power, scale)
+        _simpleskin(bp.apex, loop, verts, faces, power, scale, p)
     if bp.shoot:
-        _simpleskin(bp.shoot, loop, verts, faces, power, scale)
+        _simpleskin(bp.shoot, loop, verts, faces, power, scale, p)
     
 def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leafsize=0.5, leafrandomsize=0.1, leafrandomrot=0.1,
     nomodifiers=True, skinmethod='NATIVE', subsurface=False,
@@ -336,7 +337,7 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
     if nomodifiers == False and skinmethod == 'NATIVE': 
         # add a quad edge loop to all roots
         for r in roots:
-            simpleskin(r, verts, faces, power, scale)
+            simpleskin(r, verts, faces, power, scale, p)
             
     # end of native skinning section
     timings.add('nativeskin')

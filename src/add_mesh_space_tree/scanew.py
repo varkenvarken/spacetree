@@ -34,7 +34,8 @@ class SCA:
     self.branchlength = d
     self.maxiterations = NBP
     self.tropism = TROPISM
-    
+    self.influence = INFLUENCE if INFLUENCE > 0 else 1e16
+	
     seed(SEED)
     
     self.bp =[(0,0,0)]
@@ -63,22 +64,24 @@ class SCA:
             self.addBranchPoint(bp.v, -1)
 
   def addBranchPoint(self, bp, pi):
-    # maybe add lookip for bps with more than one child and remove them from endpoints list
     self.bp.append(tuple(bp))# even if it is passed as a vector we turn it in to a tuple to ease a later coversion to numpy
     self.bpp.append(pi)
     self.bpc.append(0)
     self.bpc[pi]+=1
     bi = len(self.bp)-1
     for epi,(ep,epd,epb) in enumerate(zip(self.ep,self.epd, self.epb)):
-      if epb >= 0: # not a dead endpoint
+      if epb != -1: # not a dead endpoint
         v = ep[0]-bp[0],ep[1]-bp[1],ep[2]-bp[2]
         d2= v[0]*v[0]+v[1]*v[1]+v[2]*v[2]
         d = sqrt(d2)
         if d < epd:
           if d>self.killdistance:
-            self.epb[epi]=bi
             self.epv[epi]= v[0]/d,v[1]/d,v[2]/d
             self.epd[epi]=d
+            if d < self.influence:
+                self.epb[epi]=bi  # dead
+            else:
+                self.epb[epi]=-2  # too far
           else:
             self.epb[epi]=-1
     if self.bpc[pi]>1:  
@@ -106,12 +109,13 @@ class SCA:
         bd2=d2
         bv =v
         bbi=bi
-    d=sqrt(d2)
-    return bbi, (v[0]/d,v[1]/d,v[2]/d), d
+    d=sqrt(bd2)
+    return bbi if d < self.influence else -2, (bv[0]/d,bv[1]/d,bv[2]/d), d
 
   def growBranches(self):
     bis = set(self.epb) # unique bps that have closests endpoints
     bis.discard(-1) # remove if present
+    bis.discard(-2)
     newbps=[]
     newbpps=[]
     for bpi in bis:

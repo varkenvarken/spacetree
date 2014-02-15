@@ -22,7 +22,7 @@
 bl_info = {
     "name": "SCA Tree Generator",
     "author": "michel anders (varkenvarken)",
-    "version": (0, 2, 0),
+    "version": (0, 2, 4),
     "blender": (2, 69, 0),
     "location": "View3D > Add > Mesh",
     "description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -40,9 +40,9 @@ import bpy
 from bpy.props import FloatProperty, IntProperty, BoolProperty, EnumProperty
 from mathutils import Vector,Euler,Matrix,Quaternion
 
-from .simplefork import simplefork, simplefork2, quadfork, bridgequads # simple skinning algorithm building blocks
 from .scanew import SCA, Branchpoint # the core class that implements the space colonization algorithm and the definition of a segment
 from .timer import Timer
+from .utils import load_material_from_bundled_lib
 
 def availableGroups(self, context):
     return [(name, name, name, n) for n,name in enumerate(bpy.data.groups.keys())]
@@ -609,7 +609,11 @@ class SCATree(bpy.types.Operator):
         return context.mode == 'OBJECT'
 
     def execute(self, context):
-        
+        # we load this library matrial unconditionally, i.e. each time we execute() which sounds like a waste
+        # but library loads get undone as well if we redo the operator ...
+        self.barkmaterial = load_material_from_bundled_lib('add_mesh_space_tree', 'material_lib.blend', 'Bark')
+        self.barkmaterial.use_fake_user = True
+            
         if not self.updateTree:
             return {'PASS_THROUGH'}
 
@@ -661,6 +665,9 @@ class SCATree(bpy.types.Operator):
             self.noModifiers, self.skinMethod, self.subSurface,
             self.leafMaxConnections, self.bLeaf,
             self.timePerformance)
+        
+        bpy.ops.object.material_slot_add()
+        obj_new.material_slots[-1].material = self.barkmaterial
         
         timings.add('objcreationstart')
         if self.addObjects:

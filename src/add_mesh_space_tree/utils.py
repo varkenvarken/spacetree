@@ -21,10 +21,24 @@ def load_material(library, material_name):
     return bpy.data.materials[new.pop()]
     
 def load_material_from_bundled_lib(script_name, library, material_name):
+    """Load a material froom a library located in the installation directory of a script.""" 
     for dir in ('addons','addons_contrib'):
         for path in bpy.utils.script_paths():
             fullpath = join(path, dir, script_name, library)
             if exists(fullpath):
                 return load_material(fullpath, material_name)
     return None
-    
+
+def get_vertex_group(context, name):
+    """Get a reference to the named vertex group of the active object, creating it if necessary."""
+    ob = context.active_object
+    if ob is None :
+        return None
+    if name in ob.vertex_groups:
+        return ob.vertex_groups[name]
+    else:
+        bpy.ops.object.vertex_group_add()
+        vg = ob.vertex_groups.active
+        vg.name = name
+        return vg
+ 

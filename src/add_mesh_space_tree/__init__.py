@@ -22,7 +22,7 @@
 bl_info = {
     "name": "SCA Tree Generator",
     "author": "michel anders (varkenvarken)",
-    "version": (0, 2, 4),
+    "version": (0, 2, 5),
     "blender": (2, 69, 0),
     "location": "View3D > Add > Mesh",
     "description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -42,7 +42,7 @@ from mathutils import Vector,Euler,Matrix,Quaternion
 
 from .scanew import SCA, Branchpoint # the core class that implements the space colonization algorithm and the definition of a segment
 from .timer import Timer
-from .utils import load_material_from_bundled_lib
+from .utils import load_material_from_bundled_lib, get_vertex_group
 
 def availableGroups(self, context):
     return [(name, name, name, n) for n,name in enumerate(bpy.data.groups.keys())]
@@ -280,7 +280,7 @@ def createObjects(tree, parent=None, objectname=None, probability=0.5, size=0.5,
                 t += gauss(1.0/probability,0.1)					 # this is not the best choice of distribution because we might get negative values especially if sigma is large
                 dvp = nleavesonbp*(dv/(probability**bunchiness)) # TODO add some randomness to the offset
 
-def basictri(bp, verts, power, scale, p):
+def basictri(bp, verts, radii, power, scale, p):
     v = bp.v + p
     nv = len(verts)
     r=(bp.connections**power)*scale
@@ -288,27 +288,29 @@ def basictri(bp, verts, power, scale, p):
     b=r*0.5   # cos(60)
     c=r*0.866 # sin(60)
     verts.extend([v+Vector((a,0,0)), v+Vector((b,-c,0)), v+Vector((b,c,0))]) # provisional, should become an optimally rotated triangle
+    radii.extend([bp.connections,bp.connections,bp.connections])
     return (nv, nv+1, nv+2)
     
-def _simpleskin(bp, loop, verts, faces, power, scale, p):
-    newloop = basictri(bp, verts, power, scale, p)
+def _simpleskin(bp, loop, verts, faces, radii, power, scale, p):
+    newloop = basictri(bp, verts, radii, power, scale, p)
     for i in range(3):
         faces.append((loop[i],loop[(i+1)%3],newloop[(i+1)%3],newloop[i]))
     if bp.apex:
-        _simpleskin(bp.apex, newloop, verts, faces, power, scale, p)
+        _simpleskin(bp.apex, newloop, verts, faces, radii, power, scale, p)
     if bp.shoot:
-        _simpleskin(bp.shoot, newloop, verts, faces, power, scale, p)
+        _simpleskin(bp.shoot, newloop, verts, faces, radii, power, scale, p)
     
-def simpleskin(bp, verts, faces, power, scale, p):
-    loop = basictri(bp, verts, power, scale, p)
+def simpleskin(bp, verts, faces, radii, power, scale, p):
+    loop = basictri(bp, verts, radii, power, scale, p)
     if bp.apex:
-        _simpleskin(bp.apex, loop, verts, faces, power, scale, p)
+        _simpleskin(bp.apex, loop, verts, faces, radii, power, scale, p)
     if bp.shoot:
-        _simpleskin(bp.shoot, loop, verts, faces, power, scale, p)
+        _simpleskin(bp.shoot, loop, verts, faces, radii, power, scale, p)
     
 def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leafsize=0.5, leafrandomsize=0.1, leafrandomrot=0.1,
     nomodifiers=True, skinmethod='NATIVE', subsurface=False,
-    maxleafconnections=2, bleaf=1.0,
+    maxleafconnections=2, 
+    bleaf=1.0,
     timeperf=True):
     
     timings = Timer()
@@ -337,7 +339,7 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
     if nomodifiers == False and skinmethod == 'NATIVE': 
         # add a quad edge loop to all roots
         for r in roots:
-            simpleskin(r, verts, faces, power, scale, p)
+            simpleskin(r, verts, faces, radii, power, scale, p)
             
     # end of native skinning section
     timings.add('nativeskin')
@@ -356,6 +358,14 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
     bpy.context.scene.objects.active = obj_new
     bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
     
+    # add a leaves vertex group
+    print('bleaf',bleaf)
+    leavesgroup = get_vertex_group(bpy.context, 'Leaves')
+    maxr = max(radii)
+    if maxr<=0 : maxr=1.0
+    maxr=float(maxr)
+    for v,r in zip(mesh.vertices,radii):
+        leavesgroup.add([v.index], (1.0-r/maxr)**bleaf, 'REPLACE')
     timings.add('createmesh')
     
     # add a subsurf modifier to smooth the branches 
@@ -528,7 +538,8 @@ class SCATree(bpy.types.Operator):
     bLeaf = FloatProperty(name="Leaf clustering",
                     description=("How much leaves cluster to the end of the internode"),
                     default=1,
-                    min=1,
+                    min=0,
+                    soft_min=0.3,
                     soft_max=4)
     leafSize = FloatProperty(name="Leaf Size",
                     description=("The leaf size"),
@@ -602,7 +613,18 @@ class SCATree(bpy.types.Operator):
                     min=0.001,
                     soft_max=0.2)
     timePerformance = BoolProperty(name="Time performance", default=False, description="Show duration of generation steps on console")
-    
+
+    apicalcontrol = FloatProperty(name="Apical Control",
+                    description=("The amount of apical control"),
+                    default=0.0,
+                    min=0.0,
+                    soft_max=0.8)    
+    apicalcontrolfalloff = FloatProperty(name="Apical Falloff",
+                    description=("Values < 1 will ease falloff, > 1 will sharpen it"),
+                    default=1.0,
+                    min=0.0,
+                    soft_max=2)    
+
     @classmethod
     def poll(self, context):
         # Check if we are in object mode
@@ -649,7 +671,10 @@ class SCATree(bpy.types.Operator):
             TROPISM=self.tropism,
             volume=volumefie,
             exclude=lambda p: insidegroup(p, self.exclusionGroup),
-            startingpoints=startingpoints)
+            startingpoints=startingpoints,
+            apicalcontrol=self.apicalcontrol,
+            apicalcontrolfalloff=self.apicalcontrolfalloff
+            )
         timings.add('sca')
             
         sca.iterate(newendpointsper1000=self.newEndPointsPer1000,maxtime=self.maxTime)
@@ -717,6 +742,8 @@ class SCATree(bpy.types.Operator):
         box.prop(self, 'power')
         box.prop(self, 'scale')
         box.prop(self, 'tropism')
+        box.prop(self, 'apicalcontrol')
+        box.prop(self, 'apicalcontrolfalloff')
         
         newbox = col2.box()
         newbox.label("Crown shape")
@@ -757,12 +784,12 @@ class SCATree(bpy.types.Operator):
             box = layout.box()
             box.label("Leaf Settings:")
             box.prop(self,'pLeaf')
-            box.prop(self,'bLeaf')
             box.prop(self,'leafSize') 
             box.prop(self,'leafRandomSize') 	
             box.prop(self,'leafRandomRot')
             box.prop(self,'leafMaxConnections')
-        
+        layout.prop(self,'bLeaf') # this controls the weight of the Leaves vertex group as well so should always ne visible
+            
         layout.prop(self,'addObjects', icon='MESH_DATA')
         if self.addObjects:
             box = layout.box()

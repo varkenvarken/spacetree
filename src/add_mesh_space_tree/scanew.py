@@ -29,19 +29,22 @@ def sphere(r,p):
 class SCA:
 
   def __init__(self,NENDPOINTS = 100,d = 0.3,NBP = 2000, KILLDIST = 5, INFLUENCE = 15, SEED=42, volume=partial(sphere,5,Vector((0,0,8))), TROPISM=0.0, exclude=lambda p: False,
-        startingpoints=[]):
+        startingpoints=[], apicalcontrol=0, apicalcontrolfalloff=1):
     self.killdistance = KILLDIST
     self.branchlength = d
     self.maxiterations = NBP
     self.tropism = TROPISM
     self.influence = INFLUENCE if INFLUENCE > 0 else 1e16
-	
+    self.apicalcontrol = apicalcontrol
+    self.apicalcontrolfalloff = apicalcontrolfalloff
+    
     seed(SEED)
     
-    self.bp =[(0,0,0)]
-    self.bpp=[None]
-    self.bpc=[0]
-    self.ep =[]
+    self.bp =[(0,0,0)]  # position of the branchpoint
+    self.bpp=[None]     # the index of its parent
+    self.bpc=[0]        # the number of connected shoots
+    self.bpa=[0]        # tha apical control factor
+    self.ep =[] # position of an endpoint
     self.epb=[] # index of closest branchpoint
     self.epv=[] # normalized direction of closest bp to this ep
     self.epd=[] # distance to closest bp
@@ -67,8 +70,12 @@ class SCA:
     self.bp.append(tuple(bp))# even if it is passed as a vector we turn it in to a tuple to ease a later coversion to numpy
     self.bpp.append(pi)
     self.bpc.append(0)
+    self.bpa.append(0)
     self.bpc[pi]+=1
     bi = len(self.bp)-1
+    # if the new branchpoint is closer than any other branchpoint it will make that endpoint point to itself
+    # if the new branchpoint is within kill distance of an endpoint it will mark it as dead
+    # if not in the influence range it will mark the the endpoint as out of range but still store the distance
     for epi,(ep,epd,epb) in enumerate(zip(self.ep,self.epd, self.epb)):
       if epb != -1: # not a dead endpoint
         v = ep[0]-bp[0],ep[1]-bp[1],ep[2]-bp[2]
@@ -84,21 +91,23 @@ class SCA:
                 self.epb[epi]=-2  # too far
           else:
             self.epb[epi]=-1
-    if self.bpc[pi]>1:  
+    if self.bpc[pi]>1:  # a branch point with two children will not grow any new branches ...
       for epi,epb in enumerate(self.epb):
-        if epb == pi:
+        if epb == pi:   # ... so any endpoint that points to this branchpoint is reassigned
           bi, v, d = self.closestBranchPoint(self.ep[epi])
           self.epb[epi]=bi
           self.epv[epi]=v
           self.epd[epi]=d
-         
+    # update apical control factors
+    self.bpa[pi] += 1
+    
   def addEndPoint(self,ep):
     self.ep.append(tuple(ep)) # even if it is passed as a vector we turn it in to a tuple to ease a later coversion to numpy
     bi, v, d = self.closestBranchPoint(ep)
     self.epb.append(bi)
     self.epv.append(v)
     self.epd.append(d)
-
+    
   def closestBranchPoint(self, p):
     bd2=1e16
     for bi,bp in enumerate(self.bp):
@@ -112,14 +121,36 @@ class SCA:
     d=sqrt(bd2)
     return bbi if d < self.influence else -2, (bv[0]/d,bv[1]/d,bv[2]/d), d
 
+  def shootSupressed(self, apicalcontrolfactor):
+    """returns true if a growing shoot should be supressed """
+    if self.apicalcontrol <= 0 :
+        return False
+    # currently the controlfactor is 1 for single shoot branchpoints, 2 for double shoot branchpoints
+    # and this value doesn't change as the tree grows.
+    # assumption: bps further down the tree will still frow side shoots (with enough endpoints) because although
+    # the probability is low, the are considered more often for growing a new branchpoint.
+    p = 1 - apicalcontrolfactor * self.apicalcontrol # apicalcontrol should be small enough to prevent p from getting < 0
+    #print(apicalcontrolfactor, p)
+    if p <= 0 :
+        return True
+    p = p ** self.apicalcontrolfalloff  # positive values. < 1 will ease the falloff, > 1 will sharpen the fallof
+    return random() > p    
+    
+    
   def growBranches(self):
-    bis = set(self.epb) # unique bps that have closests endpoints
-    bis.discard(-1) # remove if present
-    bis.discard(-2)
+    bis = set(self.epb) # unique branch points indices that have closests endpoints
+    bis.discard(-1) # remove dead endpoints if present
+    bis.discard(-2) # remove endpoints not in range 
     newbps=[]
     newbpps=[]
+    # we iterate over all branchpoints that actually have endpoints that are closest to them
+    # (branchpoints with two shoots for example will not have any endpoint markes as closest to them,
+    # something that is taken care of by the addBranchPoint() function)
     for bpi in bis:
+      if self.shootSupressed(self.bpa[bpi]) : continue # don't grow a branch if apical control is to strong
       epvs = [v for epi,v in enumerate(self.epv) if self.epb[epi]==bpi ]
+      # the direction of the new branchpoint is the average of the normalized directions to the closest endpoints
+      # (normalizing the direction will give them all equal weight). 
       v = sum(v[0] for v in epvs), sum(v[1] for v in epvs), sum(v[2] for v in epvs)
       d2= v[0]*v[0]+v[1]*v[1]+v[2]*v[2]
       d = sqrt(d2) / self.branchlength
@@ -166,7 +197,7 @@ class SCA:
         bpp = bp
         while bpp.parent is not None:
             bpp = self.branchpoints[bpp.parent]
-            bpp.connections += 1
+            bpp.connections += 1 # a bit of a misnomer: this is the sum of all connected children for this branchpoint
         
     self.endpoints=[]
     for ep in self.ep:

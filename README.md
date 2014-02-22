@@ -14,7 +14,7 @@ http://wiki.blender.org/index.php/Extensions:2.6/Py/Scripts/Add_Mesh/Add_Space_T
 INSTALLATION
 ============
 
-If you have installed Blender from a daily build, this add-on is already bundled. If you wnt to try a newer version you have to make sure that the distributed version is removed first:
+If you have installed Blender from a daily build, this add-on is already bundled. If you want to try a newer version you have to make sure that the distributed version is removed first:
 
 - quit Blender
 - go to the installation directory of the contributed addons, e.g. <BlenderInstallDir>\2.69\scripts\addons_contrib
@@ -24,13 +24,19 @@ If you have installed Blender from a daily build, this add-on is already bundled
 - choose File->User preferences->Addons->Install from file and select the downloaded .zip, click install
 - don't forget to check the enable addon checkbox once it it is installed
 
-If you want to enable it later it live in the Add Mesh section of the addons and is called 'SCA Tree generator'.
+Likewise, when installing an even newer version (i.e. after you have replaced the distributed version) you need to make sure nothing remains in the user data folder, so you'll then have to perform the steps aboce for the directory:
+
+C:\Users\<username>\AppData\Roaming\Blender Foundation\Blender\2.69\scripts\addons
+
+(on Windows taht is, I am not sure where this lives exactly on Unix systems)
+
+If you want to enable the addon later, it lives in the Add Mesh section of the addons and is called 'SCA Tree generator'.
 
 To use the addon (in the 3DVIEW) click Add->Mesh->Add tree to scene, the options are in the toolbar panel (Ctrl-T)
 
 NOTE: the tree is generated at the position of the 3d cursor. If you don't see the tree, check that you can see the cursor.
 
-NOTE: generatin a tree can take quite some time, therefore the tree does NOT change immediately if you tweak an option. You have to click the 'update tree' button to generate a new tree after you changed the settings. 
+NOTE: generating a tree can take quite some time, therefore the tree does NOT change immediately if you tweak an option. You have to click the 'update tree' button to generate a new tree after you changed the settings. 
 
 
 

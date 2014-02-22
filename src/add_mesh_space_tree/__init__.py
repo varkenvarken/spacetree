@@ -22,7 +22,7 @@
 bl_info = {
     "name": "SCA Tree Generator",
     "author": "michel anders (varkenvarken)",
-    "version": (0, 2, 5),
+    "version": (0, 2, 7),
     "blender": (2, 69, 0),
     "location": "View3D > Add > Mesh",
     "description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -42,17 +42,28 @@ from mathutils import Vector,Euler,Matrix,Quaternion
 
 from .scanew import SCA, Branchpoint # the core class that implements the space colonization algorithm and the definition of a segment
 from .timer import Timer
-from .utils import load_material_from_bundled_lib, get_vertex_group
+from .utils import load_material_from_bundled_lib, load_particlesettings_from_bundled_lib, get_vertex_group
 
 def availableGroups(self, context):
     return [(name, name, name, n) for n,name in enumerate(bpy.data.groups.keys())]
 
 def availableGroupsOrNone(self, context):
-    groups = [ ('None', 'None', 'None', 1) ]
+    groups = [ ('None', 'None', 'None', 0) ]
     return groups + [(name, name, name, n+1) for n,name in enumerate(bpy.data.groups.keys())]
 
 def availableObjects(self, context):
     return [(name, name, name, n+1) for n,name in enumerate(bpy.data.objects.keys())]
+
+particlesettings = None
+def availableParticleSettings(self, context):
+    global particlesettings
+    # im am not sure why self.__class__.particlesettings != bpy.types.MESH_OT_sca_tree ...
+    settings = [ ('None', 'None', 'None', 0) ]
+    #    return settings + [(name, name, name, n+1) for n,name in enumerate(bpy.types.MESH_OT_sca_tree.particlesettings.keys())]
+    # (identifier, name, description, number)
+    # note, when we create a new tree the particles settings will be made unique so they can be tweaked individually for
+    # each tree. That also means they will  have distinct names, but we manipulate those to be displayed in a consistent way
+    return settings + [(name, name.split('.')[0], name, n+1) for n,name in enumerate(particlesettings.keys())]
 
 def ellipsoid(r=5,rz=5,p=Vector((0,0,8)),taper=0):
     r2=r*r
@@ -306,11 +317,33 @@ def simpleskin(bp, verts, faces, radii, power, scale, p):
         _simpleskin(bp.apex, loop, verts, faces, radii, power, scale, p)
     if bp.shoot:
         _simpleskin(bp.shoot, loop, verts, faces, radii, power, scale, p)
+
+def leafnode(bp, verts, faces, radii, p1, p2):
+    loop1 = basictri(bp, verts, radii, 0.0, 0.1, p1)
+    loop2 = basictri(bp, verts, radii, 0.0, 0.1, p2)
+    for i in range(3):
+        faces.append((loop1[i],loop1[(i+1)%3],loop2[(i+1)%3],loop2[i]))
+    if bp.apex:
+        leafnode(bp.apex, verts, faces, radii, p1, p2)
+    if bp.shoot:
+        leafnode(bp.shoot, verts, faces, radii, p1, p2)
+
+def createLeaves2(tree, roots, p):
+    verts = []
+    faces = []
+    radii = []
+    for r in roots:
+        leafnode(r, verts, faces, radii, p, p++Vector((0,0,0.1)))
+    mesh = bpy.data.meshes.new('LeafEmitter')
+    mesh.from_pydata(verts, [], faces)
+    mesh.update(calc_edges=True)
+    return mesh, verts, faces, radii
     
 def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leafsize=0.5, leafrandomsize=0.1, leafrandomrot=0.1,
     nomodifiers=True, skinmethod='NATIVE', subsurface=False,
     maxleafconnections=2, 
     bleaf=1.0,
+    leafParticles=None,
     timeperf=True):
     
     timings = Timer()
@@ -359,7 +392,6 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
     bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
     
     # add a leaves vertex group
-    print('bleaf',bleaf)
     leavesgroup = get_vertex_group(bpy.context, 'Leaves')
     maxr = max(radii)
     if maxr<=0 : maxr=1.0
@@ -406,6 +438,34 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
         bpy.context.scene.objects.active = obj_leaves
         bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
         bpy.context.scene.objects.active = obj_new
+    
+    # create a particles based leaf emitter
+    mesh, verts, faces, radii = createLeaves2(tree, roots, Vector((0,0,0)))
+    obj_leaves2 = bpy.data.objects.new(mesh.name, mesh)
+    base = bpy.context.scene.objects.link(obj_leaves2)
+    obj_leaves2.parent = obj_new
+    bpy.context.scene.objects.active = obj_leaves2
+    bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+    # add a LeafDensity vertex group to the LeafEmitter object
+    leavesgroup = get_vertex_group(bpy.context, 'LeafDensity')
+    maxr = max(radii)
+    if maxr<=0 : maxr=1.0
+    maxr=float(maxr)
+    for v,r in zip(mesh.vertices,radii):
+        leavesgroup.add([v.index], (1.0-r/maxr)**bleaf, 'REPLACE')
+
+    if leafParticles != 'None':
+        global particlesettings
+        bpy.ops.object.particle_system_add()
+        #print(obj_leaves2.particle_systems.active.settings, type(obj_leaves2.particle_systems.active.settings))
+        #print(leafParticles)
+        #print(particlesettings[leafParticles],type(particlesettings[leafParticles]))
+        obj_leaves2.particle_systems.active.settings = particlesettings[leafParticles]
+        obj_leaves2.particle_systems.active.settings.count = len(faces)
+        obj_leaves2.particle_systems.active.name = 'Leaves'
+        obj_leaves2.particle_systems.active.vertex_group_density = leavesgroup.name
+        
+    bpy.context.scene.objects.active = obj_new
     
     timings.add('leaves')
     
@@ -560,6 +620,10 @@ class SCATree(bpy.types.Operator):
                     description="The maximum number of connections of an internode elegible for a leaf",
                     default=2,
                     min=0)
+    leafParticles = EnumProperty(items=availableParticleSettings,
+                    options={'ANIMATABLE','SKIP_SAVE'},
+                    name='Leave distribution',
+                    description='Settings for a leaf particle system')
     addLeaves = BoolProperty(name="Add Leaves", default=False)
     
     objectName = EnumProperty(items=availableObjects,
@@ -625,23 +689,37 @@ class SCATree(bpy.types.Operator):
                     min=0.0,
                     soft_max=2)    
 
+    def __init__(self):
+        print(self.__class__)
+        super().__init__()
+        
     @classmethod
     def poll(self, context):
         # Check if we are in object mode
         return context.mode == 'OBJECT'
 
     def execute(self, context):
+        
         # we load this library matrial unconditionally, i.e. each time we execute() which sounds like a waste
         # but library loads get undone as well if we redo the operator ...
         self.barkmaterial = load_material_from_bundled_lib('add_mesh_space_tree', 'material_lib.blend', 'Bark')
         self.barkmaterial.use_fake_user = True
-            
+    
+        global particlesettings
+        # we *must* execute this every time because this operator has UNDO as attribute so anything that's changed will be reverted on each execution. If we initialize this only once, the operator crashes Blender because it will refer to stale data.
+        if True: ##particlesettings is None:
+            particlesettings = load_particlesettings_from_bundled_lib('add_mesh_space_tree', 'material_lib.blend', 'Branch')
+            bpy.types.MESH_OT_sca_tree.particlesettings = particlesettings
+            #for n,p in particlesettings.items():
+            #    p.use_fake_user = True
+                
         if not self.updateTree:
             return {'PASS_THROUGH'}
 
         timings=Timer()
         
-        # necessary otherwize ray casts toward these objects may fail. However if nothing is selected, we get a runtime error ...
+        
+        # necessary otherwise ray casts toward these objects may fail. However if nothing is selected, we get a runtime error ...
         try:
             bpy.ops.object.mode_set(mode='EDIT', toggle=False)
             bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
@@ -688,7 +766,7 @@ class SCATree(bpy.types.Operator):
         
         obj_new=createGeometry(sca,self.power,self.scale,self.addLeaves, self.pLeaf, self.leafSize, self.leafRandomSize, self.leafRandomRot,
             self.noModifiers, self.skinMethod, self.subSurface,
-            self.leafMaxConnections, self.bLeaf,
+            self.leafMaxConnections, self.bLeaf, self.leafParticles,
             self.timePerformance)
         
         bpy.ops.object.material_slot_add()
@@ -788,6 +866,7 @@ class SCATree(bpy.types.Operator):
             box.prop(self,'leafRandomSize') 	
             box.prop(self,'leafRandomRot')
             box.prop(self,'leafMaxConnections')
+        layout.prop(self,'leafParticles')
         layout.prop(self,'bLeaf') # this controls the weight of the Leaves vertex group as well so should always ne visible
             
         layout.prop(self,'addObjects', icon='MESH_DATA')

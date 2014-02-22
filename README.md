@@ -11,6 +11,10 @@ Documentation (work in progress):
 
 http://wiki.blender.org/index.php/Extensions:2.6/Py/Scripts/Add_Mesh/Add_Space_Tree
 
+Current developments can be followed on BlenderArtists:
+
+http://blenderartists.org/forum/showthread.php?282550-A-new-tree-add-on
+
 INSTALLATION
 ============
 

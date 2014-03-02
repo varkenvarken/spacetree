@@ -22,7 +22,7 @@
 bl_info = {
     "name": "SCA Tree Generator",
     "author": "michel anders (varkenvarken)",
-    "version": (0, 2, 7),
+    "version": (0, 2, 9),
     "blender": (2, 69, 0),
     "location": "View3D > Add > Mesh",
     "description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -42,7 +42,7 @@ from mathutils import Vector,Euler,Matrix,Quaternion
 
 from .scanew import SCA, Branchpoint # the core class that implements the space colonization algorithm and the definition of a segment
 from .timer import Timer
-from .utils import load_material_from_bundled_lib, load_particlesettings_from_bundled_lib, get_vertex_group
+from .utils import load_materials_from_bundled_lib, load_particlesettings_from_bundled_lib, get_vertex_group
 
 def availableGroups(self, context):
     return [(name, name, name, n) for n,name in enumerate(bpy.data.groups.keys())]
@@ -55,6 +55,8 @@ def availableObjects(self, context):
     return [(name, name, name, n+1) for n,name in enumerate(bpy.data.objects.keys())]
 
 particlesettings = None
+barkmaterials = None
+
 def availableParticleSettings(self, context):
     global particlesettings
     # im am not sure why self.__class__.particlesettings != bpy.types.MESH_OT_sca_tree ...
@@ -64,6 +66,10 @@ def availableParticleSettings(self, context):
     # note, when we create a new tree the particles settings will be made unique so they can be tweaked individually for
     # each tree. That also means they will  have distinct names, but we manipulate those to be displayed in a consistent way
     return settings + [(name, name.split('.')[0], name, n+1) for n,name in enumerate(particlesettings.keys())]
+
+def availableBarkMaterials(self, context):
+    global barkmaterials
+    return [(name, name.split('.')[0], name, n) for n,name in enumerate(barkmaterials.keys())]
 
 def ellipsoid(r=5,rz=5,p=Vector((0,0,8)),taper=0):
     r2=r*r
@@ -97,11 +103,11 @@ def ellipsoid2(rxy=5,rz=5,p=Vector((0,0,8)),surfacebias=1,topbias=1):
     while True:
         phi = 6.283*random()
         theta = 3.1415*(random()-0.5)
-        r = random()**(surfacebias/2)
+        r = random()**((1.0/surfacebias)/2)
         x = r*rxy*cos(theta)*cos(phi)
         y = r*rxy*cos(theta)*sin(phi)
         st=sin(theta)
-        st = (((st+1)/2)**topbias)*2-1
+        st = (((st+1)/2)**(1.0/topbias))*2-1
         z = r*rz*st
         #print(">>>%.2f %.2f %.2f "%(x,y,z))
         m = p+Vector((x,y,z))
@@ -185,54 +191,6 @@ def groupExtends(group):
     mn = Vector((min(bb[0::3]), min(bb[1::3]), min(bb[2::3])))
     return mx-mn,mn
 
-def createLeaves(tree, probability=0.5, size=0.5, randomsize=0.1, randomrot=0.1, maxconnections=2, bunchiness=1.0):
-    p=bpy.context.scene.cursor_location
-    
-    verts=[]
-    faces=[]
-    c1=Vector((-size/10,-size/2,0))
-    c2=Vector((    size,-size/2,0))
-    c3=Vector((    size, size/2,0))
-    c4=Vector((-size/10, size/2,0))
-    t=gauss(1.0/probability,0.1)
-    bpswithleaves=0
-    for bp in tree.branchpoints:
-        if bp.connections < maxconnections:
-        
-            dv = tree.branchpoints[bp.parent].v - bp.v if bp.parent else Vector((0,0,0))
-            dvp = Vector((0,0,0))
-            
-            bpswithleaves+=1
-            nleavesonbp=0
-            while t<bpswithleaves:
-                nleavesonbp+=1
-                rx = (random()-0.5)*randomrot*6.283 # TODO vertical tilt in direction of tropism
-                ry = (random()-0.5)*randomrot*6.283
-                rot = Euler((rx,ry,random()*6.283),'ZXY')
-                scale = 1+(random()-0.5)*randomsize
-                v=c1.copy()
-                v.rotate(rot)
-                verts.append(v*scale+bp.v+dvp)
-                v=c2.copy()
-                v.rotate(rot)
-                verts.append(v*scale+bp.v+dvp)
-                v=c3.copy()
-                v.rotate(rot)
-                verts.append(v*scale+bp.v+dvp)
-                v=c4.copy()
-                v.rotate(rot)
-                verts.append(v*scale+bp.v+dvp)
-                n = len(verts)
-                faces.append((n-4,n-3,n-2,n-1))
-                t += gauss(1.0/probability,0.1)					 # this is not the best choice of distribution because we might get negative values especially if sigma is large
-                dvp = nleavesonbp*(dv/(probability**bunchiness)) # TODO add some randomness to the offset
-                
-    mesh = bpy.data.meshes.new('Leaves')
-    mesh.from_pydata(verts,[],faces)
-    mesh.update(calc_edges=True)
-    mesh.uv_textures.new()
-    return mesh
-
 def createMarkers(tree,scale=0.05):
     #not used as markers are parented to tree object that is created at the cursor position
     #p=bpy.context.scene.cursor_location
@@ -253,43 +211,6 @@ def createMarkers(tree,scale=0.05):
     mesh.from_pydata(verts,[],faces)
     mesh.update(calc_edges=True)
     return mesh
-
-def createObjects(tree, parent=None, objectname=None, probability=0.5, size=0.5, randomsize=0.1, randomrot=0.1, maxconnections=2, bunchiness=1.0):
-
-    if (parent is None) or (objectname is None) or (objectname == 'None') : return
-    
-    # not necessary, we parent the new objects: p=bpy.context.scene.cursor_location
-    
-    theobject = bpy.data.objects[objectname]
-    
-    t=gauss(1.0/probability,0.1)
-    bpswithleaves=0
-    for bp in tree.branchpoints:
-        if bp.connections < maxconnections:
-        
-            dv = tree.branchpoints[bp.parent].v - bp.v if bp.parent else Vector((0,0,0))
-            dvp = Vector((0,0,0))
-            
-            bpswithleaves+=1
-            nleavesonbp=0
-            while t<bpswithleaves:
-                nleavesonbp+=1
-                rx = (random()-0.5)*randomrot*6.283 # TODO vertical tilt in direction of tropism
-                ry = (random()-0.5)*randomrot*6.283
-                rot = Euler((rx,ry,random()*6.283),'ZXY')
-                scale = size+(random()-0.5)*randomsize
-                
-                # add new object and parent it
-                obj = bpy.data.objects.new(objectname,theobject.data)
-                obj.location = bp.v+dvp
-                obj.rotation_mode = 'ZXY'
-                obj.rotation_euler = rot[:]
-                obj.scale = [scale,scale,scale]
-                obj.parent = parent
-                bpy.context.scene.objects.link(obj)
-                
-                t += gauss(1.0/probability,0.1)					 # this is not the best choice of distribution because we might get negative values especially if sigma is large
-                dvp = nleavesonbp*(dv/(probability**bunchiness)) # TODO add some randomness to the offset
 
 def basictri(bp, verts, radii, power, scale, p):
     v = bp.v + p
@@ -339,11 +260,11 @@ def createLeaves2(tree, roots, p):
     mesh.update(calc_edges=True)
     return mesh, verts, faces, radii
     
-def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leafsize=0.5, leafrandomsize=0.1, leafrandomrot=0.1,
+def createGeometry(tree, power=0.5, scale=0.01,
     nomodifiers=True, skinmethod='NATIVE', subsurface=False,
-    maxleafconnections=2, 
     bleaf=1.0,
-    leafParticles=None,
+    leafParticles='None',
+    objectParticles='None',
     timeperf=True):
     
     timings = Timer()
@@ -406,6 +327,7 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
             bpy.ops.object.modifier_add(type='SUBSURF')
             bpy.context.active_object.modifiers[0].levels = 1
             bpy.context.active_object.modifiers[0].render_levels = 1
+            bpy.context.active_object.modifiers[0].use_subsurf_uv = True
 
         # add a skin modifier
         if skinmethod == 'BLENDER':
@@ -426,19 +348,10 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
             bpy.ops.object.modifier_add(type='SUBSURF')
             bpy.context.active_object.modifiers[-1].levels = 1
             bpy.context.active_object.modifiers[-1].render_levels = 2
-    
+            bpy.context.active_object.modifiers[-1].use_subsurf_uv = True
+
     timings.add('modifiers')
 
-    # create the leaves object
-    if addleaves:
-        mesh = createLeaves(tree, pleaf, leafsize, leafrandomsize, leafrandomrot, maxleafconnections, bleaf)
-        obj_leaves = bpy.data.objects.new(mesh.name, mesh)
-        base = bpy.context.scene.objects.link(obj_leaves)
-        obj_leaves.parent = obj_new
-        bpy.context.scene.objects.active = obj_leaves
-        bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
-        bpy.context.scene.objects.active = obj_new
-    
     # create a particles based leaf emitter
     mesh, verts, faces, radii = createLeaves2(tree, roots, Vector((0,0,0)))
     obj_leaves2 = bpy.data.objects.new(mesh.name, mesh)
@@ -457,15 +370,20 @@ def createGeometry(tree, power=0.5, scale=0.01, addleaves=False, pleaf=0.5, leaf
     if leafParticles != 'None':
         global particlesettings
         bpy.ops.object.particle_system_add()
-        #print(obj_leaves2.particle_systems.active.settings, type(obj_leaves2.particle_systems.active.settings))
-        #print(leafParticles)
-        #print(particlesettings[leafParticles],type(particlesettings[leafParticles]))
         obj_leaves2.particle_systems.active.settings = particlesettings[leafParticles]
         obj_leaves2.particle_systems.active.settings.count = len(faces)
         obj_leaves2.particle_systems.active.name = 'Leaves'
         obj_leaves2.particle_systems.active.vertex_group_density = leavesgroup.name
+    if objectParticles != 'None':
+        global particlesettings
+        bpy.ops.object.particle_system_add()
+        obj_leaves2.particle_systems.active.settings = particlesettings[objectParticles]
+        obj_leaves2.particle_systems.active.settings.count = len(faces)
+        obj_leaves2.particle_systems.active.name = 'Objects'
+        obj_leaves2.particle_systems.active.vertex_group_density = leavesgroup.name
         
     bpy.context.scene.objects.active = obj_new
+    bpy.ops.object.shade_smooth()
     
     timings.add('leaves')
     
@@ -501,13 +419,13 @@ class SCATree(bpy.types.Operator):
                     default=0,
                     min=-1.0,
                     soft_max=1.0)
-    power = FloatProperty(name="Power",
-                    description="Tapering power of branch connections",
+    power = FloatProperty(name="Branch tapering",
+                    description="How fast a branch tapers off as it splits",
                     default=0.3,
                     min=0.01,
                     soft_max=1.0)
-    scale = FloatProperty(name="Scale",
-                    description="Branch size",
+    scale = FloatProperty(name="Branch diameter",
+                    description="Branch base diameter (gets smaller near the tips)",
                     default=0.01,
                     min=0.0001,
                     soft_max=1.0)
@@ -561,12 +479,12 @@ class SCATree(bpy.types.Operator):
     surfaceBias = FloatProperty(name="Surface Bias",
                     description="Surface bias (how much markers are favored near the surface)",
                     default=1,
-                    min=-10,
+                    min=0.1,
                     soft_max=10)
     topBias = FloatProperty(name="Top Bias",
                     description="Top bias (how much markers are favored near the top)",
                     default=1,
-                    min=-10,
+                    min=0.1,
                     soft_max=10)
     randomSeed = IntProperty(name="Random Seed",
                     description="The seed governing random generation",
@@ -590,82 +508,33 @@ class SCATree(bpy.types.Operator):
                     default=0.0,
                     min=0.0,
                     soft_max=10)
-    pLeaf = FloatProperty(name="Leaves per internode",
-                    description=("The average number of leaves per internode"),
-                    default=0.5,
-                    min=0.0,
-                    soft_max=4)
     bLeaf = FloatProperty(name="Leaf clustering",
                     description=("How much leaves cluster to the end of the internode"),
                     default=1,
                     min=0,
                     soft_min=0.3,
                     soft_max=4)
-    leafSize = FloatProperty(name="Leaf Size",
-                    description=("The leaf size"),
-                    default=0.5,
-                    min=0.0,
-                    soft_max=1)
-    leafRandomSize = FloatProperty(name="Leaf Random Size",
-                    description=("The amount of randomness to add to the leaf size"),
-                    default=0.1,
-                    min=0.0,
-                    soft_max=10)
-    leafRandomRot = FloatProperty(name="Leaf Random Rotation",
-                    description=("The amount of random rotation to add to the leaf"),
-                    default=0.1,
-                    min=0.0,
-                    soft_max=1)
-    leafMaxConnections = IntProperty(name="Max Connections",
-                    description="The maximum number of connections of an internode elegible for a leaf",
-                    default=2,
-                    min=0)
+
+    addLeaves = BoolProperty(name="Add Leaves & Objects", default=False)
     leafParticles = EnumProperty(items=availableParticleSettings,
                     options={'ANIMATABLE','SKIP_SAVE'},
-                    name='Leave distribution',
+                    name='Leaf distribution',
                     description='Settings for a leaf particle system')
-    addLeaves = BoolProperty(name="Add Leaves", default=False)
-    
-    objectName = EnumProperty(items=availableObjects,
+    objectParticles = EnumProperty(items=availableParticleSettings,
                     options={'ANIMATABLE','SKIP_SAVE'},
-                    name='Object Name',
-                    description='Name of additional objects to duplicate at the branchpoints')
-    pObject = FloatProperty(name="Objects per internode",
-                    description=("The average number of objects per internode"),
-                    default=0.3,
-                    min=0.0,
-                    soft_max=1)
-    bObject = FloatProperty(name="Object clustering",
-                    description=("How much objects cluster to the end of the internode"),
-                    default=1,
-                    min=1,
-                    soft_max=4)
-    objectSize = FloatProperty(name="Object Size",
-                    description=("The object size"),
-                    default=1,
-                    min=0.0,
-                    soft_max=2)
-    objectRandomSize = FloatProperty(name="Object Random Size",
-                    description=("The amount of randomness to add to the object size"),
-                    default=0.1,
-                    min=0.0,
-                    soft_max=10)
-    objectRandomRot = FloatProperty(name="Object Random Rotation",
-                    description=("The amount of random rotation to add to the object"),
-                    default=0.1,
-                    min=0.0,
-                    soft_max=1)
-    objectMaxConnections = IntProperty(name="Max Connections for Object",
-                    description="The maximum number of connections of an internode elegible for a object",
-                    default=1,
-                    min=0)
-    addObjects = BoolProperty(name="Add Objects", default=False)
+                    name='Additional object distribution',
+                    description='Settings for a extra particle system')
+    
+    barkMaterial = EnumProperty(items=availableBarkMaterials,
+                    options={'ANIMATABLE','SKIP_SAVE'},
+                    name='Bark material',
+                    description='Bark material to use on branches')
     
     updateTree = BoolProperty(name="Update Tree", default=False)
     
     noModifiers = BoolProperty(name="No Modifers", default=True)
     subSurface = BoolProperty(name="Sub Surface", default=False, description="Add subsurface modifier to trunk skin")
-    skinMethod = EnumProperty(items=[('NATIVE','Native','Built in skinning method',1),('BLENDER','Skin modifier','Use Blenders skin modifier',2)],
+    skinMethod = EnumProperty(items=[('NATIVE','Space tree','Spacetrees own skinning method',1),('BLENDER','Skin modifier','Use Blenders skin modifier',2)],
                     options={'ANIMATABLE','SKIP_SAVE'},
                     name='Skinning method',
                     description='How to add a surface to the trunk skeleton')
@@ -702,16 +571,14 @@ class SCATree(bpy.types.Operator):
         
         # we load this library matrial unconditionally, i.e. each time we execute() which sounds like a waste
         # but library loads get undone as well if we redo the operator ...
-        self.barkmaterial = load_material_from_bundled_lib('add_mesh_space_tree', 'material_lib.blend', 'Bark')
-        self.barkmaterial.use_fake_user = True
-    
+        global barkmaterials
+        barkmaterials = load_materials_from_bundled_lib('add_mesh_space_tree', 'material_lib.blend', 'Bark')
+        bpy.types.MESH_OT_sca_tree.barkmaterials = barkmaterials
+        
         global particlesettings
         # we *must* execute this every time because this operator has UNDO as attribute so anything that's changed will be reverted on each execution. If we initialize this only once, the operator crashes Blender because it will refer to stale data.
-        if True: ##particlesettings is None:
-            particlesettings = load_particlesettings_from_bundled_lib('add_mesh_space_tree', 'material_lib.blend', 'Branch')
-            bpy.types.MESH_OT_sca_tree.particlesettings = particlesettings
-            #for n,p in particlesettings.items():
-            #    p.use_fake_user = True
+        particlesettings = load_particlesettings_from_bundled_lib('add_mesh_space_tree', 'material_lib.blend', 'LeafEmitter')
+        bpy.types.MESH_OT_sca_tree.particlesettings = particlesettings
                 
         if not self.updateTree:
             return {'PASS_THROUGH'}
@@ -764,25 +631,15 @@ class SCATree(bpy.types.Operator):
             base = bpy.context.scene.objects.link(obj_markers)
         timings.add('showmarkers')
         
-        obj_new=createGeometry(sca,self.power,self.scale,self.addLeaves, self.pLeaf, self.leafSize, self.leafRandomSize, self.leafRandomRot,
+        obj_new=createGeometry(sca,self.power,self.scale,
             self.noModifiers, self.skinMethod, self.subSurface,
-            self.leafMaxConnections, self.bLeaf, self.leafParticles,
+            self.bLeaf, 
+            self.leafParticles if self.addLeaves else 'None', 
+            self.objectParticles if self.addLeaves else 'None',
             self.timePerformance)
         
         bpy.ops.object.material_slot_add()
-        obj_new.material_slots[-1].material = self.barkmaterial
-        
-        timings.add('objcreationstart')
-        if self.addObjects:
-            createObjects(sca, obj_new,
-                objectname=self.objectName,
-                probability=self.pObject,
-                size=self.objectSize,
-                randomsize=self.objectRandomSize,
-                randomrot=self.objectRandomRot,
-                maxconnections=self.objectMaxConnections,
-                bunchiness=self.bObject)
-        timings.add('objcreation')
+        obj_new.material_slots[-1].material = barkmaterials[self.barkMaterial]
         
         if self.showMarkers:
             obj_markers.parent = obj_new
@@ -817,8 +674,6 @@ class SCATree(bpy.types.Operator):
         box.prop(self, 'internodeLength')
         box.prop(self, 'influenceRange')
         box.prop(self, 'killDistance')
-        box.prop(self, 'power')
-        box.prop(self, 'scale')
         box.prop(self, 'tropism')
         box.prop(self, 'apicalcontrol')
         box.prop(self, 'apicalcontrolfalloff')
@@ -841,45 +696,32 @@ class SCATree(bpy.types.Operator):
             newbox.prop(self, 'crownSize')
             newbox.prop(self, 'crownShape')
             newbox.prop(self, 'crownOffset')
+            newbox.label("Distribution bias of new endpoints added while iterating")
+            newbox.prop(self, 'surfaceBias')
+            newbox.prop(self, 'topBias')
         newbox = col2.box()
         newbox.prop(self,'useTrunkGroup')
         if self.useTrunkGroup:
             newbox.prop(self,'trunkGroup')
             
-        box.prop(self, 'surfaceBias')
-        box.prop(self, 'topBias')
         box.prop(self, 'newEndPointsPer1000')
         
         box = col2.box()
         box.label("Skin options:")
         box.prop(self, 'noModifiers')
         if not self.noModifiers:
-            box.prop(self,'skinMethod')
-            box.prop(self,'subSurface')
-        
-        layout.prop(self, 'addLeaves', icon='MESH_DATA')
-        if self.addLeaves:
-            box = layout.box()
-            box.label("Leaf Settings:")
-            box.prop(self,'pLeaf')
-            box.prop(self,'leafSize') 
-            box.prop(self,'leafRandomSize') 	
-            box.prop(self,'leafRandomRot')
-            box.prop(self,'leafMaxConnections')
-        layout.prop(self,'leafParticles')
-        layout.prop(self,'bLeaf') # this controls the weight of the Leaves vertex group as well so should always ne visible
+            box.prop(self, 'skinMethod')
+            box.prop(self, 'subSurface')
+            box.prop(self, 'power')
+            box.prop(self, 'scale')
+            box.prop(self, 'barkMaterial')
             
-        layout.prop(self,'addObjects', icon='MESH_DATA')
-        if self.addObjects:
-            box = layout.box()
-            box.label("Object Settings:")
-            box.prop(self,'objectName')
-            box.prop(self,'pObject')
-            box.prop(self,'bObject')
-            box.prop(self,'objectSize')
-            box.prop(self,'objectRandomSize')
-            box.prop(self,'objectRandomRot')
-            box.prop(self,'objectMaxConnections')
+        box = layout.box()
+        box.prop(self, 'addLeaves')
+        if self.addLeaves:
+            box.prop(self,'bLeaf')
+            box.prop(self,'leafParticles')
+            box.prop(self,'objectParticles')
 
         box = layout.box()
         box.label("Debug Settings:")

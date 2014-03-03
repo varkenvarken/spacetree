@@ -1,7 +1,7 @@
 # ##### BEGIN GPL LICENSE BLOCK #####
 #
 #  SCA Tree Generator, a Blender addon
-#  (c) 2013 Michel J. Anders (varkenvarken)
+#  (c) 2013, 2014 Michel J. Anders (varkenvarken)
 #
 #  This program is free software; you can redistribute it and/or
 #  modify it under the terms of the GNU General Public License
@@ -22,7 +22,7 @@
 bl_info = {
     "name": "SCA Tree Generator",
     "author": "michel anders (varkenvarken)",
-    "version": (0, 2, 9),
+    "version": (0, 2, 10),
     "blender": (2, 69, 0),
     "location": "View3D > Add > Mesh",
     "description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -147,7 +147,7 @@ def insidegroup(pointrelativetocursor, group):
             return True
     return False
 
-def groupdistribution(crowngroup,shadowgroup=None,seed=0,size=Vector((1,1,1)),pointrelativetocursor=Vector((0,0,0))):
+def groupdistribution(crowngroup,shadowgroup=None,shadowdensity=0.5, seed=0,size=Vector((1,1,1)),pointrelativetocursor=Vector((0,0,0))):
     if crowngroup == shadowgroup:
         shadowgroup = None # safeguard otherwise every marker would be rejected
     nocrowngroup = bpy.data.groups.find(crowngroup)<0
@@ -164,7 +164,13 @@ def groupdistribution(crowngroup,shadowgroup=None,seed=0,size=Vector((1,1,1)),po
         v+=pointrelativetocursor
         index+=1
         insidecrown = nocrowngroup or insidegroup(v,crowngroup)
-        outsideshadow = noshadowgroup or not insidegroup(v,shadowgroup)
+        outsideshadow = noshadowgroup # if there's no shadowgroup we're always outside of it
+        if not outsideshadow:
+            inshadow = insidegroup(v,shadowgroup) # if there is, check if we're inside the group
+            if not inshadow:
+                outsideshadow = True
+            else:
+                outsideshadow = random() > shadowdensity  # if inside the group we might still generate a marker if the density is low
         # if shadowgroup overlaps all or a significant part of the crowngroup
         # no markers will be yielded and we would be in an endless loop.
         # so if we yield too few correct markers we start yielding them anyway.
@@ -239,22 +245,22 @@ def simpleskin(bp, verts, faces, radii, power, scale, p):
     if bp.shoot:
         _simpleskin(bp.shoot, loop, verts, faces, radii, power, scale, p)
 
-def leafnode(bp, verts, faces, radii, p1, p2):
-    loop1 = basictri(bp, verts, radii, 0.0, 0.1, p1)
-    loop2 = basictri(bp, verts, radii, 0.0, 0.1, p2)
+def leafnode(bp, verts, faces, radii, p1, p2, scale=0.1):
+    loop1 = basictri(bp, verts, radii, 0.0, scale, p1)
+    loop2 = basictri(bp, verts, radii, 0.0, scale, p2)
     for i in range(3):
         faces.append((loop1[i],loop1[(i+1)%3],loop2[(i+1)%3],loop2[i]))
     if bp.apex:
-        leafnode(bp.apex, verts, faces, radii, p1, p2)
+        leafnode(bp.apex, verts, faces, radii, p1, p2, scale)
     if bp.shoot:
-        leafnode(bp.shoot, verts, faces, radii, p1, p2)
+        leafnode(bp.shoot, verts, faces, radii, p1, p2, scale)
 
-def createLeaves2(tree, roots, p):
+def createLeaves2(tree, roots, p, scale):
     verts = []
     faces = []
     radii = []
     for r in roots:
-        leafnode(r, verts, faces, radii, p, p++Vector((0,0,0.1)))
+        leafnode(r, verts, faces, radii, p, p++Vector((0,0, scale)), scale)
     mesh = bpy.data.meshes.new('LeafEmitter')
     mesh.from_pydata(verts, [], faces)
     mesh.update(calc_edges=True)
@@ -265,7 +271,10 @@ def createGeometry(tree, power=0.5, scale=0.01,
     bleaf=1.0,
     leafParticles='None',
     objectParticles='None',
+    emitterscale=0.1,
     timeperf=True):
+
+    global particlesettings
     
     timings = Timer()
     
@@ -352,35 +361,34 @@ def createGeometry(tree, power=0.5, scale=0.01,
 
     timings.add('modifiers')
 
-    # create a particles based leaf emitter
-    mesh, verts, faces, radii = createLeaves2(tree, roots, Vector((0,0,0)))
-    obj_leaves2 = bpy.data.objects.new(mesh.name, mesh)
-    base = bpy.context.scene.objects.link(obj_leaves2)
-    obj_leaves2.parent = obj_new
-    bpy.context.scene.objects.active = obj_leaves2
-    bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
-    # add a LeafDensity vertex group to the LeafEmitter object
-    leavesgroup = get_vertex_group(bpy.context, 'LeafDensity')
-    maxr = max(radii)
-    if maxr<=0 : maxr=1.0
-    maxr=float(maxr)
-    for v,r in zip(mesh.vertices,radii):
-        leavesgroup.add([v.index], (1.0-r/maxr)**bleaf, 'REPLACE')
+    # create a particles based leaf emitter (if we have leaves and/or objects)
+    if leafParticles != 'None' or objectParticles != 'None':
+        mesh, verts, faces, radii = createLeaves2(tree, roots, Vector((0,0,0)), emitterscale)
+        obj_leaves2 = bpy.data.objects.new(mesh.name, mesh)
+        base = bpy.context.scene.objects.link(obj_leaves2)
+        obj_leaves2.parent = obj_new
+        bpy.context.scene.objects.active = obj_leaves2
+        bpy.ops.object.origin_set(type='ORIGIN_CURSOR')
+        # add a LeafDensity vertex group to the LeafEmitter object
+        leavesgroup = get_vertex_group(bpy.context, 'LeafDensity')
+        maxr = max(radii)
+        if maxr<=0 : maxr=1.0
+        maxr=float(maxr)
+        for v,r in zip(mesh.vertices,radii):
+            leavesgroup.add([v.index], (1.0-r/maxr)**bleaf, 'REPLACE')
 
-    if leafParticles != 'None':
-        global particlesettings
-        bpy.ops.object.particle_system_add()
-        obj_leaves2.particle_systems.active.settings = particlesettings[leafParticles]
-        obj_leaves2.particle_systems.active.settings.count = len(faces)
-        obj_leaves2.particle_systems.active.name = 'Leaves'
-        obj_leaves2.particle_systems.active.vertex_group_density = leavesgroup.name
-    if objectParticles != 'None':
-        global particlesettings
-        bpy.ops.object.particle_system_add()
-        obj_leaves2.particle_systems.active.settings = particlesettings[objectParticles]
-        obj_leaves2.particle_systems.active.settings.count = len(faces)
-        obj_leaves2.particle_systems.active.name = 'Objects'
-        obj_leaves2.particle_systems.active.vertex_group_density = leavesgroup.name
+        if leafParticles != 'None':
+            bpy.ops.object.particle_system_add()
+            obj_leaves2.particle_systems.active.settings = particlesettings[leafParticles]
+            obj_leaves2.particle_systems.active.settings.count = len(faces)
+            obj_leaves2.particle_systems.active.name = 'Leaves'
+            obj_leaves2.particle_systems.active.vertex_group_density = leavesgroup.name
+        if objectParticles != 'None':
+            bpy.ops.object.particle_system_add()
+            obj_leaves2.particle_systems.active.settings = particlesettings[objectParticles]
+            obj_leaves2.particle_systems.active.settings.count = len(faces)
+            obj_leaves2.particle_systems.active.name = 'Objects'
+            obj_leaves2.particle_systems.active.vertex_group_density = leavesgroup.name
         
     bpy.context.scene.objects.active = obj_new
     bpy.ops.object.shade_smooth()
@@ -445,6 +453,11 @@ class SCATree(bpy.types.Operator):
                     options={'ANIMATABLE','SKIP_SAVE'},
                     name='Shadow Group',
                     description='Group of objects subtracted from the crown shape')
+    shadowDensity = FloatProperty(name="Shadow density",
+                    description="Shadow density, bigger means less markers in shadow group volume",
+                    default=0.5,
+                    min=0.0,
+                    max=1.0)
     
     exclusionGroup = EnumProperty(items=availableGroupsOrNone,
                     options={'ANIMATABLE','SKIP_SAVE'},
@@ -524,6 +537,11 @@ class SCATree(bpy.types.Operator):
                     options={'ANIMATABLE','SKIP_SAVE'},
                     name='Additional object distribution',
                     description='Settings for a extra particle system')
+    emitterScale = FloatProperty(name="Emitter scale",
+                    description="Leaf emitter scale (will not be rendered anyway)",
+                    default=0.01,
+                    min=0.0001,
+                    soft_max=1.0)
     
     barkMaterial = EnumProperty(items=availableBarkMaterials,
                     options={'ANIMATABLE','SKIP_SAVE'},
@@ -558,10 +576,6 @@ class SCATree(bpy.types.Operator):
                     min=0.0,
                     soft_max=2)    
 
-    def __init__(self):
-        print(self.__class__)
-        super().__init__()
-        
     @classmethod
     def poll(self, context):
         # Check if we are in object mode
@@ -595,7 +609,7 @@ class SCATree(bpy.types.Operator):
         
         if self.useGroups:
             size,minp = groupExtends(self.crownGroup)
-            volumefie=partial(groupdistribution,self.crownGroup,self.shadowGroup,self.randomSeed,size,minp-bpy.context.scene.cursor_location)
+            volumefie=partial(groupdistribution,self.crownGroup,self.shadowGroup,self.shadowDensity,self.randomSeed,size,minp-bpy.context.scene.cursor_location)
         else:
             volumefie=partial(ellipsoid2,self.crownSize*self.crownShape,self.crownSize,Vector((0,0,self.crownSize+self.crownOffset)),self.surfaceBias,self.topBias)
         
@@ -636,6 +650,7 @@ class SCATree(bpy.types.Operator):
             self.bLeaf, 
             self.leafParticles if self.addLeaves else 'None', 
             self.objectParticles if self.addLeaves else 'None',
+            self.emitterScale,
             self.timePerformance)
         
         bpy.ops.object.material_slot_add()
@@ -688,6 +703,7 @@ class SCATree(bpy.types.Operator):
             groupbox = newbox.box()
             groupbox.alert=(self.shadowGroup == self.crownGroup)
             groupbox.prop(self,'shadowGroup')
+            groupbox.prop(self,'shadowDensity')
             groupbox = newbox.box()
             groupbox.alert=(self.exclusionGroup == self.crownGroup)
             groupbox.prop(self,'exclusionGroup')
@@ -722,6 +738,7 @@ class SCATree(bpy.types.Operator):
             box.prop(self,'bLeaf')
             box.prop(self,'leafParticles')
             box.prop(self,'objectParticles')
+            box.prop(self,'emitterScale')
 
         box = layout.box()
         box.label("Debug Settings:")

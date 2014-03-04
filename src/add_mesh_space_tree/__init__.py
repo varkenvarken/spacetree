@@ -59,7 +59,7 @@ barkmaterials = None
 
 def availableParticleSettings(self, context):
     global particlesettings
-    # im am not sure why self.__class__.particlesettings != bpy.types.MESH_OT_sca_tree ...
+    # im am not sure why self.__class__.particlesettings != bpy.types.MESH_OT_sca_tree ....
     settings = [ ('None', 'None', 'None', 0) ]
     #    return settings + [(name, name, name, n+1) for n,name in enumerate(bpy.types.MESH_OT_sca_tree.particlesettings.keys())]
     # (identifier, name, description, number)

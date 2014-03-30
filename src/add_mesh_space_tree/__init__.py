@@ -22,7 +22,7 @@
 bl_info = {
     "name": "SCA Tree Generator",
     "author": "michel anders (varkenvarken)",
-    "version": (0, 2, 10),
+    "version": (0, 2, 11),
     "blender": (2, 69, 0),
     "location": "View3D > Add > Mesh",
     "description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
@@ -111,14 +111,15 @@ def ellipsoid2(rxy=5,rz=5,p=Vector((0,0,8)),surfacebias=1,topbias=1):
         z = r*rz*st
         #print(">>>%.2f %.2f %.2f "%(x,y,z))
         m = p+Vector((x,y,z))
-        reject = False
-        for ob in bpy.context.selected_objects:
-            # probably we should check if each object is a mesh
-            if pointInsideMesh(m,ob) :
-                reject = True
-                break
-        if not reject:
-            yield m
+# undocumented feature: bombs if any selected object is not a mesh. Use crown and shadow/exclusion groups instead
+#        reject = False
+#        for ob in bpy.context.selected_objects:
+#            # probably we should check if each object is a mesh
+#            if pointInsideMesh(m,ob) :
+#                reject = True
+#                break
+#        if not reject:
+        yield m
 
 def halton3D(index):
     """
@@ -143,7 +144,7 @@ def halton3D(index):
 def insidegroup(pointrelativetocursor, group):
     if bpy.data.groups.find(group)<0 : return False
     for ob in bpy.data.groups[group].objects:
-        if pointInsideMesh(pointrelativetocursor,ob):
+        if isinstance(ob.data, bpy.types.Mesh) and pointInsideMesh(pointrelativetocursor,ob):
             return True
     return False
 
@@ -193,10 +194,11 @@ def groupExtends(group):
             for v in ob.bound_box: # v is not a vector but an array of floats
                 p = ob.matrix_world * Vector(v[0:3])
                 bb.extend(p[0:3])
-    mx = Vector((max(bb[0::3]), max(bb[1::3]), max(bb[2::3])))
-    mn = Vector((min(bb[0::3]), min(bb[1::3]), min(bb[2::3])))
-    return mx-mn,mn
-
+        mx = Vector((max(bb[0::3]), max(bb[1::3]), max(bb[2::3])))
+        mn = Vector((min(bb[0::3]), min(bb[1::3]), min(bb[2::3])))
+        return mx-mn,mn
+    return Vector((2,2,2)),Vector((-1,-1,-1)) # a 2x2x2 cube when the group does not exist
+    
 def createMarkers(tree,scale=0.05):
     #not used as markers are parented to tree object that is created at the cursor position
     #p=bpy.context.scene.cursor_location
@@ -444,7 +446,7 @@ class SCATree(bpy.types.Operator):
                     description="Use groups of objects to specify marker distribution",
                     default=False)
     
-    crownGroup = EnumProperty(items=availableGroups,
+    crownGroup = EnumProperty(items=availableGroupsOrNone,
                     options={'ANIMATABLE','SKIP_SAVE'},
                     name='Crown Group',
                     description='Group of objects that specify crown shape')
@@ -601,10 +603,13 @@ class SCATree(bpy.types.Operator):
         
         
         # necessary otherwise ray casts toward these objects may fail. However if nothing is selected, we get a runtime error ...
+        # and if an object is selected that has no edit mode (e.g. an empty) we get a type error
         try:
             bpy.ops.object.mode_set(mode='EDIT', toggle=False)
             bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         except RuntimeError:
+            pass
+        except TypeError:
             pass
         
         if self.useGroups:
@@ -701,11 +706,11 @@ class SCATree(bpy.types.Operator):
             groupbox = newbox.box()
             groupbox.prop(self,'crownGroup')
             groupbox = newbox.box()
-            groupbox.alert=(self.shadowGroup == self.crownGroup)
+            groupbox.alert=(self.shadowGroup != 'None' and self.shadowGroup == self.crownGroup)
             groupbox.prop(self,'shadowGroup')
             groupbox.prop(self,'shadowDensity')
             groupbox = newbox.box()
-            groupbox.alert=(self.exclusionGroup == self.crownGroup)
+            groupbox.alert=(self.exclusionGroup != 'None' and self.exclusionGroup == self.crownGroup)
             groupbox.prop(self,'exclusionGroup')
         else:
             newbox.label("Simple ellipsoid defining crown shape")

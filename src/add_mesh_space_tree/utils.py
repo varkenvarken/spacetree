@@ -1,6 +1,14 @@
+from os import remove
 from os.path import exists, join
+from zipfile import ZipFile
 import bpy
 
+def extract(zipfile, name, dest):
+    zf = zipfile + '.zip'
+    with ZipFile(zf) as z:
+        z.extract(name, dest)
+    remove(zf)
+    
 def load_materials(library, material_name):
     """given a path to a library .blend file and the name of a material, append that material and reurn a reference to it.
     
@@ -43,6 +51,9 @@ def load_materials_from_bundled_lib(script_name, library, material_name):
             fullpath = join(path, dir, script_name, library)
             if exists(fullpath):
                 return load_materials(fullpath, material_name)
+            if exists(fullpath + ".zip"):
+                extract(fullpath, library, join(path, dir, script_name))
+                return load_materials(fullpath, material_name)
     return None
 
 def load_particlesettings_from_bundled_lib(script_name, library, object_name):
@@ -51,6 +62,9 @@ def load_particlesettings_from_bundled_lib(script_name, library, object_name):
         for path in bpy.utils.script_paths():
             fullpath = join(path, dir, script_name, library)
             if exists(fullpath):
+                return load_particlesettings(fullpath, object_name)
+            if exists(fullpath + ".zip"):
+                extract(fullpath, library, join(path, dir, script_name))
                 return load_particlesettings(fullpath, object_name)
     return None
 

@@ -22,8 +22,8 @@
 bl_info = {
     "name": "SCA Tree Generator",
     "author": "michel anders (varkenvarken)",
-    "version": (0, 2, 12),
-    "blender": (2, 69, 0),
+    "version": (0, 2, 14),
+    "blender": (2, 70, 0),
     "location": "View3D > Add > Mesh",
     "description": "Adds a tree created with the space colonization algorithm starting at the 3D cursor",
     "warning": "",
@@ -267,6 +267,20 @@ def createLeaves2(tree, roots, p, scale):
     mesh.from_pydata(verts, [], faces)
     mesh.update(calc_edges=True)
     return mesh, verts, faces, radii
+
+def pruneTree(tree, generation):
+    nbp = []
+    i2p = {}
+    #print()
+    for i,bp in enumerate(tree):
+        #print(i, bp.v, bp.generation, bp.parent, end='')
+        if bp.generation >= generation:
+            #print(' keep', end='')
+            bp.index = i
+            i2p[i] = len(nbp)
+            nbp.append(bp)
+        #print()
+    return nbp, i2p
     
 def createGeometry(tree, power=0.5, scale=0.01,
     nomodifiers=True, skinmethod='NATIVE', subsurface=False,
@@ -274,7 +288,8 @@ def createGeometry(tree, power=0.5, scale=0.01,
     leafParticles='None',
     objectParticles='None',
     emitterscale=0.1,
-    timeperf=True):
+    timeperf=True,
+    prune=0):
 
     global particlesettings
     
@@ -287,17 +302,24 @@ def createGeometry(tree, power=0.5, scale=0.01,
     radii=[]
     roots=set()
     
+    # prune if requested
+    tree.branchpoints, index2position = pruneTree(tree.branchpoints, prune)
+        
     # Loop over all branchpoints and create connected edges
+    #print('\ngenerating skeleton')
+    
     for n,bp in enumerate(tree.branchpoints):
+        #print(n, bp.index, bp.v, bp.generation, bp.parent)
         verts.append(bp.v+p)
         radii.append(bp.connections)
-        bp.index=n
         if not (bp.parent is None) :
-            edges.append((len(verts)-1,bp.parent))
+            #print(bp.parent,index2position[bp.parent])
+            edges.append((len(verts)-1,index2position[bp.parent]))
         else :
             nv=len(verts)
             roots.add(bp)
-    
+        bp.index=n
+        
     timings.add('skeleton')
     
     # native skinning method
@@ -325,7 +347,8 @@ def createGeometry(tree, power=0.5, scale=0.01,
     
     # add a leaves vertex group
     leavesgroup = get_vertex_group(bpy.context, 'Leaves')
-    maxr = max(radii)
+    
+    maxr = max(radii) if len(radii)>0 else 0.03 # pruning might have been so aggressive that there are no radii (NB. python 3.3 does not know the default keyword for the max() fie
     if maxr<=0 : maxr=1.0
     maxr=float(maxr)
     for v,r in zip(mesh.vertices,radii):
@@ -509,6 +532,10 @@ class SCATree(bpy.types.Operator):
                     description="The maximum number of iterations allowed for tree generation",
                     default=40,
                     min=0)
+    pruningGen = IntProperty(name="Pruning Generation",
+                    description="Prune branches last touched in this generation (0 won't prune anythin)",
+                    default=0,
+                    min=0)
     numberOfEndpoints = IntProperty(name="Number of Endpoints",
                     description="The number of endpoints generated in the growing volume",
                     default=100,
@@ -573,10 +600,15 @@ class SCATree(bpy.types.Operator):
                     min=0.0,
                     soft_max=0.8)    
     apicalcontrolfalloff = FloatProperty(name="Apical Falloff",
-                    description=("Values < 1 will ease falloff, > 1 will sharpen it"),
+                    description=("Fallof along branch. Values < 1 will ease falloff, > 1 will sharpen it"),
                     default=1.0,
                     min=0.0,
                     soft_max=2)    
+    apicalcontroltiming = IntProperty(name="Apical Timing",
+                    description=("Maximum number of generations with apical control. 0 = always."),
+                    default=10,
+                    min=0,
+                    soft_max=40)    
 
     @classmethod
     def poll(self, context):
@@ -637,7 +669,8 @@ class SCATree(bpy.types.Operator):
             exclude=lambda p: insidegroup(p, self.exclusionGroup),
             startingpoints=startingpoints,
             apicalcontrol=self.apicalcontrol,
-            apicalcontrolfalloff=self.apicalcontrolfalloff
+            apicalcontrolfalloff=self.apicalcontrolfalloff,
+            apicaltiming=self.apicalcontroltiming
             )
         timings.add('sca')
             
@@ -656,7 +689,8 @@ class SCATree(bpy.types.Operator):
             self.leafParticles if self.addLeaves else 'None', 
             self.objectParticles if self.addLeaves else 'None',
             self.emitterScale,
-            self.timePerformance)
+            self.timePerformance,
+            self.pruningGen)
         
         bpy.ops.object.material_slot_add()
         obj_new.material_slots[-1].material = barkmaterials[self.barkMaterial]
@@ -696,7 +730,10 @@ class SCATree(bpy.types.Operator):
         box.prop(self, 'killDistance')
         box.prop(self, 'tropism')
         box.prop(self, 'apicalcontrol')
-        box.prop(self, 'apicalcontrolfalloff')
+        if self.apicalcontrol > 0:
+            box.prop(self, 'apicalcontrolfalloff')
+            box.prop(self, 'apicalcontroltiming')
+        box.prop(self, 'pruningGen')
         
         newbox = col2.box()
         newbox.label("Crown shape")

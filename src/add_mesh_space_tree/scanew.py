@@ -2,17 +2,55 @@ from random import random,seed,expovariate
 from functools import partial
 from math import sqrt
 from time import time
+from array import array
 
 from mathutils import Vector
 
+try:
+    from .utilc import closest
+except:
+    print('utilc.closest() not available, using pure python implementation instead')
+    def closest(pos, count, n, x, y, z):
+        d2 = 1e30
+        for i in range(n):
+          if count[i] > 1 : continue
+          dx, dy, dz = x-pos[i*3], y-pos[i*3+1], z-pos[i*3+2]
+          d = dx*dx + dy*dy + dz*dz
+          if d < d2:
+            d2 = d
+            ci = i
+            v = dx,dy,dz
+        return d2, ci, v
+
+try:
+    from .utilc import direction
+except:
+    print('utilc.direction() not available, using pure python implementation instead')
+    def direction(v):
+        n = len(v)//3
+        x=0
+        y=0
+        z=0
+        for i in range(n):
+            x += v[i*3  ]
+            y += v[i*3+1]
+            z += v[i*3+2]
+
+        return (x,y,z),x*x+y*y+z*z
+
 class Branchpoint:
-    def __init__(self, p, parent):
+
+    count = 0
+    
+    def __init__(self, p, parent, generation):
         self.v=Vector(p)
         self.parent = parent
         self.connections = 1
+        self.generation = generation
         self.apex = None
         self.shoot = None
-        self.index = None
+        Branchpoint.count += 1
+        self.index = Branchpoint.count
 
     def __str__(self):
         return str(self.v)+" "+str(self.parent)
@@ -29,7 +67,7 @@ def sphere(r,p):
 class SCA:
 
   def __init__(self,NENDPOINTS = 100,d = 0.3,NBP = 2000, KILLDIST = 5, INFLUENCE = 15, SEED=42, volume=partial(sphere,5,Vector((0,0,8))), TROPISM=0.0, exclude=lambda p: False,
-        startingpoints=[], apicalcontrol=0, apicalcontrolfalloff=1):
+        startingpoints=[], apicalcontrol=0, apicalcontrolfalloff=1, apicaltiming=0):
     self.killdistance = KILLDIST
     self.branchlength = d
     self.maxiterations = NBP
@@ -37,12 +75,17 @@ class SCA:
     self.influence = INFLUENCE if INFLUENCE > 0 else 1e16
     self.apicalcontrol = apicalcontrol
     self.apicalcontrolfalloff = apicalcontrolfalloff
+    self.apicaltiming = apicaltiming
+    self.apicalstep = apicalcontrol / apicaltiming if apicaltiming > 0 else 0.0
     
     seed(SEED)
     
-    self.bp =[(0,0,0)]  # position of the branchpoint
+    self.bp = array('d')# position of the branchpoint
+    self.bp.extend((0,0,0))
+    self.bpg=[0]        # last generation 'touching' this bp
     self.bpp=[None]     # the index of its parent
-    self.bpc=[0]        # the number of connected shoots
+    self.bpc=array('i') # the number of connected shoots
+    self.bpc.append(0)
     self.bpa=[0]        # tha apical control factor
     self.ep =[] # position of an endpoint
     self.epb=[] # index of closest branchpoint
@@ -60,22 +103,29 @@ class SCA:
         self.addEndPoint(next(self.volumepoint))
 
     if len(startingpoints)>0:
-        self.bp=[]
+        self.bp=array('d')
         self.bpp=[]
-        self.bpc=[]
+        self.bpc=array('i')
         for bp in startingpoints:
-            self.addBranchPoint(bp.v, -1)
+            self.addBranchPoint(bp.v, -1, 0)
 
-  def addBranchPoint(self, bp, pi):
-    self.bp.append(tuple(bp))# even if it is passed as a vector we turn it in to a tuple to ease a later coversion to numpy
+  def addBranchPoint(self, bp, pi, generation):
+    self.bp.extend(tuple(bp))# even if it is passed as a vector we turn it in to a tuple to ease a later coversion to numpy
+    self.bpg.append(generation)
+    ppi = pi
+    while ppi is not None:
+        self.bpg[ppi] = generation
+        ppi = self.bpp[ppi]
     self.bpp.append(pi)
     self.bpc.append(0)
     self.bpa.append(0)
     self.bpc[pi]+=1
-    bi = len(self.bp)-1
+    bi = len(self.bp)//3-1
     # if the new branchpoint is closer than any other branchpoint it will make that endpoint point to itself
     # if the new branchpoint is within kill distance of an endpoint it will mark it as dead
     # if not in the influence range it will mark the the endpoint as out of range but still store the distance
+    
+
     for epi,(ep,epd,epb) in enumerate(zip(self.ep,self.epd, self.epb)):
       if epb != -1: # not a dead endpoint
         v = ep[0]-bp[0],ep[1]-bp[1],ep[2]-bp[2]
@@ -107,18 +157,10 @@ class SCA:
     self.epb.append(bi)
     self.epv.append(v)
     self.epd.append(d)
-    
+
   def closestBranchPoint(self, p):
-    bd2=1e16
-    for bi,bp in enumerate(self.bp):
-      if self.bpc[bi]>1 : continue
-      v = p[0]-bp[0],p[1]-bp[1],p[2]-bp[2]
-      d2= v[0]*v[0]+v[1]*v[1]+v[2]*v[2]
-      if d2<bd2:
-        bd2=d2
-        bv =v
-        bbi=bi
-    d=sqrt(bd2)
+    d2, bbi, bv = closest(self.bp, self.bpc, len(self.bp)//3, p[0], p[1], p[2])
+    d=sqrt(d2)
     return bbi if d < self.influence else -2, (bv[0]/d,bv[1]/d,bv[2]/d), d
 
   def shootSupressed(self, apicalcontrolfactor):
@@ -137,7 +179,7 @@ class SCA:
     return random() > p    
     
     
-  def growBranches(self):
+  def growBranches(self, generation):
     bis = set(self.epb) # unique branch points indices that have closests endpoints
     bis.discard(-1) # remove dead endpoints if present
     bis.discard(-2) # remove endpoints not in range 
@@ -148,18 +190,20 @@ class SCA:
     # something that is taken care of by the addBranchPoint() function)
     for bpi in bis:
       if self.shootSupressed(self.bpa[bpi]) : continue # don't grow a branch if apical control is to strong
-      epvs = [v for epi,v in enumerate(self.epv) if self.epb[epi]==bpi ]
+      
+      epvs = array('d',[c for epi,v in enumerate(self.epv) if self.epb[epi]==bpi for c in v])
       # the direction of the new branchpoint is the average of the normalized directions to the closest endpoints
-      # (normalizing the direction will give them all equal weight). 
-      v = sum(v[0] for v in epvs), sum(v[1] for v in epvs), sum(v[2] for v in epvs)
-      d2= v[0]*v[0]+v[1]*v[1]+v[2]*v[2]
+      # (normalizing the direction will give them all equal weight).
+
+      v,d2 = direction(epvs)      
       d = sqrt(d2) / self.branchlength
       vd= v[0]/d,v[1]/d,v[2]/d
-      newbps.append((self.bp[bpi][0]+vd[0], self.bp[bpi][1]+vd[1], self.bp[bpi][2]+vd[2]+self.tropism ))
+
+      newbps.append((self.bp[bpi*3]+vd[0], self.bp[bpi*3+1]+vd[1], self.bp[bpi*3+2]+vd[2]+self.tropism ))
       newbpps.append(bpi)
     for newbp,newbpp in zip(newbps,newbpps):
       if not self.exclude(Vector(newbp)):
-        self.addBranchPoint(newbp,newbpp)
+        self.addBranchPoint(newbp, newbpp, generation)
 
    
   def iterate(self, newendpointsper1000=0, maxtime=0.0):
@@ -170,7 +214,7 @@ class SCA:
     t=expovariate(newendpointsper1000) if newendpointsper1000 > 0.0 else 1 # time to the first new 'endpoint add event'
 
     for i in range(self.maxiterations):
-        self.growBranches()
+        self.growBranches(i)
         if maxtime>0 and time()-starttime>maxtime: break
         if newendpointsper1000 > 0.0:
             # generate new endpoints with a poisson process
@@ -180,11 +224,19 @@ class SCA:
                 self.addEndPoint(next(self.volumepoint))
                 endpointsadded+=1
                 t+=expovariate(newendpointsper1000) # time to new 'endpoint add event'
-
+        # reduce apical control
+        if self.apicaltiming > 0:
+            self.apicaltiming -=1
+            self.apicalcontrol -= self.apicalstep
+            if self.apicalcontrol < 0 :
+                self.apicalcontrol = 0.0
 
     self.branchpoints=[]
-    for bp,bpp in zip(self.bp, self.bpp):
-        self.branchpoints.append(Branchpoint(bp, bpp))
+    for bi in range(len(self.bp)//3):
+        bp = self.bp[bi*3], self.bp[bi*3+1], self.bp[bi*3+2]
+        bpp= self.bpp[bi]
+        gen= self.bpg[bi]
+        self.branchpoints.append(Branchpoint(bp, bpp, gen))
         # note that we do not actually discriminate betwee apex and sideshoot, the first to connect is the apex
         if bpp is not None:
             parent = self.branchpoints[bpp]

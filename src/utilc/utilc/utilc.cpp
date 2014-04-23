@@ -5,7 +5,7 @@ double closest(double *pos, int *count, int n, double x, double y, double z, int
 	double d2 = 1e30;
 	for (int i = 0; i<n; i++){
 		if (count[i]>1) continue;
-		double dx = x - pos[i * 3    ];
+		double dx = x - pos[i * 3];
 		double dy = y - pos[i * 3 + 1];
 		double dz = z - pos[i * 3 + 2];
 		double d = dx*dx + dy*dy + dz*dz;
@@ -35,12 +35,12 @@ py_closest(PyObject *self, PyObject *args)
 	PyObject *pos, *count;
 	Py_buffer posview, countview;
 	int n;
-	double x,y,z;
+	double x, y, z;
 	double d2, v[3];
 	int index;
 
 	/* Get the passed Python objects */
-	if (!PyArg_ParseTuple(args, "OOiddd", &pos, &count, &n, &x, &y, &z )) {
+	if (!PyArg_ParseTuple(args, "OOiddd", &pos, &count, &n, &x, &y, &z)) {
 		return NULL;
 	}
 
@@ -82,13 +82,13 @@ py_closest(PyObject *self, PyObject *args)
 
 
 	/* Pass the raw buffer and size to the C function */
-	d2 = closest((double *)posview.buf, (int *)countview.buf, n, x, y, z, &index,v);
+	d2 = closest((double *)posview.buf, (int *)countview.buf, n, x, y, z, &index, v);
 	/* Indicate we're done working with the buffer */
-	
+
 	PyBuffer_Release(&posview);
 	PyBuffer_Release(&countview);
 
-	return Py_BuildValue("di(ddd)", d2, index, v[0],v[1],v[2]);
+	return Py_BuildValue("di(ddd)", d2, index, v[0], v[1], v[2]);
 }
 
 static PyObject *
@@ -97,7 +97,7 @@ py_direction(PyObject *self, PyObject *args)
 	PyObject *pos;
 	Py_buffer posview;
 	double d2, v[3];
-	
+
 	/* Get the passed Python objects */
 	if (!PyArg_ParseTuple(args, "O", &pos)) {
 		return NULL;
@@ -119,7 +119,7 @@ py_direction(PyObject *self, PyObject *args)
 		return NULL;
 	}
 
-	d2 = direction((double *)posview.buf, (posview.len/posview.itemsize)/3, v);
+	d2 = direction((double *)posview.buf, (posview.len / posview.itemsize) / 3, v);
 	PyBuffer_Release(&posview);
 
 	return Py_BuildValue("(ddd)d", v[0], v[1], v[2], d2);

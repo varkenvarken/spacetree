@@ -18,6 +18,9 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="utilc.cpp" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{6B0CA23F-5BD7-4A26-9A46-99964F790242}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
@@ -149,9 +152,6 @@
       <OutputFile>C:\Users\Michel\Documents\GitHub\spacetree\src\add_mesh_space_tree\$(TargetName)$(TargetExt)</OutputFile>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClCompile Include="utilc.cpp" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

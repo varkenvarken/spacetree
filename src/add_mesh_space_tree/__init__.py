@@ -676,12 +676,13 @@ class SCATree(bpy.types.Operator):
             
         sca.iterate(newendpointsper1000=self.newEndPointsPer1000,maxtime=self.maxTime)
         timings.add('iterate')
-        
+        print('execute: iterate done')
         if self.showMarkers:
             mesh = createMarkers(sca, self.markerScale)
             obj_markers = bpy.data.objects.new(mesh.name, mesh)
             base = bpy.context.scene.objects.link(obj_markers)
         timings.add('showmarkers')
+        print('execute: showmarkers done')
         
         obj_new=createGeometry(sca,self.power,self.scale,
             self.noModifiers, self.skinMethod, self.subSurface,
@@ -691,6 +692,7 @@ class SCATree(bpy.types.Operator):
             self.emitterScale,
             self.timePerformance,
             self.pruningGen)
+        print('execute: create geometry done')
         
         bpy.ops.object.material_slot_add()
         obj_new.material_slots[-1].material = barkmaterials[self.barkMaterial]

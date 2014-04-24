@@ -161,7 +161,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <OutputFile>E:\blender-2.70-release-win64\2.70\python\lib\site-packages\$(TargetName)$(TargetExt)</OutputFile>
+      <OutputFile>C:\Users\Michel\Documents\GitHub\spacetree\src\add_mesh_space_tree\$(TargetName)$(TargetExt)</OutputFile>
       <AdditionalLibraryDirectories>E:\Blender Source Environment\lib\win64_vc12\python\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>python33.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>

@@ -48,6 +48,16 @@ static point *multiply(const point &a, const double b){
 	return new point{ a[0] * b, a[1] * b, a[2] * b };
 }
 
+static point *normalize(const point &a){
+	auto len = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+	if (len > 1e-7){
+		len = sqrt(len);
+		return new point{ a[0] / len, a[1] / len, a[2] / len };
+	}
+	else{
+		return new point{ a[0], a[1], a[2] };
+	}
+}
 
 static double dot(const point *a, const point *b){
 	return (*a)[0] * (*b)[0] + (*a)[1] * (*b)[1] + (*a)[2] * (*b)[2];
@@ -157,7 +167,7 @@ static void add_branchpoint(int branchpointindex, const point &dir, double branc
 	delete newbranchpoint;
 }
 
-static void newbranchpoints(double branchlength, double killdistance){
+static void newbranchpoints(double branchlength, double killdistance, double tropism){
 	// create a set of unique branchpoint indices
 	auto live_branchpoints = unordered_set<int>(ep_closestbranchpointindex.begin(), ep_closestbranchpointindex.end());
 
@@ -174,12 +184,10 @@ static void newbranchpoints(double branchlength, double killdistance){
 				sumdir[2] += ep[2];
 			}
 		}
-		double len = sqrt(dot(&sumdir, &sumdir));
-		if (len > 1e-7){
-			sumdir[0] /= len;
-			sumdir[1] /= len;
-			sumdir[2] /= len;
-		}
+		sumdir = *normalize(sumdir);
+		sumdir[2] += tropism;
+		sumdir = *normalize(sumdir);
+
 		add_branchpoint(bpi, sumdir, branchlength, killdistance);
 	}
 }
@@ -227,7 +235,7 @@ int iterate(
 	int extra_eps = additionalendpoints.size() / niterations; // extra eps per iteration
 	for (int i = 0; i < niterations; i++){
 		//dump_endpoints(i);
-		newbranchpoints(branchlength, killdistance);
+		newbranchpoints(branchlength, killdistance, tropism);
 		for (int j = 0; j < extra_eps; j++){
 			if (additionalendpoints.size() <= 0) break;
 			add_endpoint(additionalendpoints.back());

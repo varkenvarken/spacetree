@@ -28,6 +28,6 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="cscatest.py" />
+    <CustomBuild Include="cscatest.py" />
   </ItemGroup>
 </Project>

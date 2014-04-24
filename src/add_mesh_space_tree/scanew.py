@@ -6,7 +6,7 @@ from array import array
 
 from mathutils import Vector
 
-from csca import sca
+from .csca import sca
 
 class Branchpoint:
 

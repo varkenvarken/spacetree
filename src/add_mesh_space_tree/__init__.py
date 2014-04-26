@@ -84,7 +84,7 @@ def ellipsoid(r=5,rz=5,p=Vector((0,0,8)),taper=0):
         if f*x*x/r2+f*y*y/r2+z*z/z2 <= 1:
             yield p+Vector((x,y,z))
 
-def pointInsideMesh(pointrelativetocursor,ob):
+def pointInsideMesh(pointrelativetocursor,ob): # point should be a Vector
     # adapted from http://blenderartists.org/forum/showthread.php?195605-Detecting-if-a-point-is-inside-a-mesh-2-5-API&p=1691633&viewfull=1#post1691633
     mat = ob.matrix_world.inverted()
     orig = mat*(pointrelativetocursor+bpy.context.scene.cursor_location)
@@ -141,10 +141,10 @@ def halton3D(index):
         return result
     return Vector((halton(index,2),halton(index,3),halton(index,5)))
 
-def insidegroup(pointrelativetocursor, group):
+def insidegroup(p, group): #p relative to cursor
     if bpy.data.groups.find(group)<0 : return False
     for ob in bpy.data.groups[group].objects:
-        if isinstance(ob.data, bpy.types.Mesh) and pointInsideMesh(pointrelativetocursor,ob):
+        if isinstance(ob.data, bpy.types.Mesh) and pointInsideMesh(Vector(p),ob):
             return True
     return False
 
@@ -657,6 +657,10 @@ class SCATree(bpy.types.Operator):
                     p = ob.location - context.scene.cursor_location
                     startingpoints.append(Branchpoint(p,None))
         
+        def callback(x,y,z):
+            print('<<<<callback>>>>',x,y,z)
+            return insidegroup((x,y,z), self.exclusionGroup)
+            
         timings.add('scastart')
         sca = SCA(NBP = self.maxIterations,
             NENDPOINTS=self.numberOfEndpoints,
@@ -666,7 +670,7 @@ class SCATree(bpy.types.Operator):
             SEED=self.randomSeed,
             TROPISM=self.tropism,
             volume=volumefie,
-            exclude=lambda p: insidegroup(p, self.exclusionGroup),
+            exclude=None if bpy.data.groups.find(self.exclusionGroup)<0 else callback,
             startingpoints=startingpoints,
             apicalcontrol=self.apicalcontrol,
             apicalcontrolfalloff=self.apicalcontrolfalloff,

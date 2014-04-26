@@ -1,7 +1,10 @@
 # this is a testscript for the csca module.
 # it assumes that the module is in the python path
 
-from csca import sca
+import sys
+print(sys.path)
+
+from csca import sca, testcallback
 
 out = open('C:/temp/testoutput.txt','w')
 # sca(endpoints, startpoints, extraendpoints, iterations, branchlength, killdistance, tropism)
@@ -17,5 +20,12 @@ n=0
 for p,v in zip(points,parents):
 	out.write(str(n)+' '+str(p)+' '+str(v)+"\n")
 	n+=1
+
+
+def mycallback(a):
+	print('mycallback', a, type(a))
+	return 42
+
+testcallback(mycallback)
 
 print('module test suite completed')

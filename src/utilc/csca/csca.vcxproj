@@ -166,7 +166,8 @@
       <AdditionalDependencies>python33.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <CustomBuildStep>
-      <Command>e:\blender-2.70-release-win64\blender.exe -b -P c:\Users\Michel\Documents\GitHub\spacetree\src\utilc\csca\cscatest.py</Command>
+      <Command>copy /B /Y C:\Users\Michel\Documents\GitHub\spacetree\src\add_mesh_space_tree\csca.pyd e:\blender-2.70-release-win64\2.70\scripts\modules\csca.pyd
+e:\blender-2.70-release-win64\blender.exe -b -P c:\Users\Michel\Documents\GitHub\spacetree\src\utilc\csca\cscatest.py</Command>
     </CustomBuildStep>
     <CustomBuildStep>
       <Message>Performing module test with blender</Message>

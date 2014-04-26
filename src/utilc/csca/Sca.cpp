@@ -1,3 +1,24 @@
+// ##### BEGIN GPL LICENSE BLOCK #####
+//
+//  SCA Tree Generator, a Blender addon
+//  (c) 2013, 2014 Michel J. Anders (varkenvarken)
+//
+//  This program is free software; you can redistribute it and / or
+//  modify it under the terms of the GNU General Public License
+//  as published by the Free Software Foundation; either version 2
+//  of the License, or(at your option) any later version.
+//
+//  This program is distributed in the hope that it will be useful,
+//  but WITHOUT ANY WARRANTY; without even the implied warranty of
+//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.See the
+//  GNU General Public License for more details.
+//
+//  You should have received a copy of the GNU General Public License
+//  along with this program; if not, write to the Free Software Foundation,
+// Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110 - 1301, USA.
+//
+// ##### END GPL LICENSE BLOCK #####
+
 #include <omp.h>
 #include <math.h>
 #include <unordered_set>
@@ -63,6 +84,24 @@ static double dot(const point *a, const point *b){
 	return (*a)[0] * (*b)[0] + (*a)[1] * (*b)[1] + (*a)[2] * (*b)[2];
 }
 
+static bool exclude(point *p, PyObject *callback){
+	PyObject *arg;
+	PyObject *result;
+	arg = Py_BuildValue("(ddd)", (*p)[0], (*p)[1], (*p)[2]);
+	if(!PyTuple_Check(arg))printf("not a typle\n");
+	result = PyObject_CallObject(callback, arg);
+	Py_DECREF(arg);
+	if (result != NULL){
+		int iresult;
+		if (!PyArg_Parse(result, "p", &iresult)){ // we don't use PyArg_ParseTuple because apparently a callback returns old style arguments?
+			// ignore error
+		}
+		Py_DECREF(result);
+		return iresult;
+	}
+	return false;
+}
+
 // functions to actually evolve a tree with the space tree colonization algorithm
 static double closest_branchpoint(const point endpoint, int &branchpointindex, point &normalizeddirection){
 	double mind2 = DBL_MAX;
@@ -111,14 +150,17 @@ static void add_endpoint(point &ep){
 	//printf("add_endpoint done adding values\n");
 }
 
-static void add_branchpoint(int branchpointindex, const point &dir, double branchlength, double killdistance){
+static void add_branchpoint(int branchpointindex, const point &dir, double branchlength, double killdistance, PyObject *excludecallback){
 	//printf("add_branchpoint, parent %d\n", branchpointindex);
+	point *branch = multiply(dir, branchlength);
+	point *newbranchpoint = add((*bp_position)[branchpointindex], *branch);
+
+	if (excludecallback != NULL && exclude(newbranchpoint, excludecallback)) return;
+
+	(*bp_position).push_back(*newbranchpoint);
 	(*bp_parent).push_back(branchpointindex);
 	bp_connections[branchpointindex]++;
 	bp_connections.push_back(0);
-	point *branch = multiply(dir, branchlength);
-	point *newbranchpoint = add((*bp_position)[branchpointindex], *branch);
-	(*bp_position).push_back(*newbranchpoint);
 
 	// check if the new branchpoint is closer than other bps to any endpoint
 	int bpi = bp_position->size()-1; // index of newly added branchpoint
@@ -167,7 +209,7 @@ static void add_branchpoint(int branchpointindex, const point &dir, double branc
 	delete newbranchpoint;
 }
 
-static void newbranchpoints(double branchlength, double killdistance, double tropism){
+static void newbranchpoints(double branchlength, double killdistance, double tropism, PyObject *excludecallback){
 	// create a set of unique branchpoint indices
 	auto live_branchpoints = unordered_set<int>(ep_closestbranchpointindex.begin(), ep_closestbranchpointindex.end());
 
@@ -188,7 +230,7 @@ static void newbranchpoints(double branchlength, double killdistance, double tro
 		sumdir[2] += tropism;
 		sumdir = *normalize(sumdir);
 
-		add_branchpoint(bpi, sumdir, branchlength, killdistance);
+		add_branchpoint(bpi, sumdir, branchlength, killdistance, excludecallback);
 	}
 }
 
@@ -200,6 +242,7 @@ int iterate(
 	double branchlength,
 	double killdistance,
 	double tropism,
+	PyObject *excludecallback,
 
 	points &branchpoints,
 	indices &branchpointparents)
@@ -235,7 +278,7 @@ int iterate(
 	int extra_eps = additionalendpoints.size() / niterations; // extra eps per iteration
 	for (int i = 0; i < niterations; i++){
 		//dump_endpoints(i);
-		newbranchpoints(branchlength, killdistance, tropism);
+		newbranchpoints(branchlength, killdistance, tropism, excludecallback);
 		for (int j = 0; j < extra_eps; j++){
 			if (additionalendpoints.size() <= 0) break;
 			add_endpoint(additionalendpoints.back());

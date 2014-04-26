@@ -1,3 +1,24 @@
+# ##### BEGIN GPL LICENSE BLOCK #####
+#
+#  SCA Tree Generator, a Blender addon
+#  (c) 2013, 2014 Michel J. Anders (varkenvarken)
+#
+#  This program is free software; you can redistribute it and/or
+#  modify it under the terms of the GNU General Public License
+#  as published by the Free Software Foundation; either version 2
+#  of the License, or (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software Foundation,
+#  Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+#
+# ##### END GPL LICENSE BLOCK #####
+
 from random import random,seed,expovariate
 from functools import partial
 from math import sqrt
@@ -36,7 +57,7 @@ def sphere(r,p):
             
 class SCA:
 
-  def __init__(self,NENDPOINTS = 100,d = 0.3,NBP = 2000, KILLDIST = 5, INFLUENCE = 15, SEED=42, volume=partial(sphere,5,Vector((0,0,8))), TROPISM=0.0, exclude=lambda p: False,
+  def __init__(self,NENDPOINTS = 100,d = 0.3,NBP = 2000, KILLDIST = 5, INFLUENCE = 15, SEED=42, volume=partial(sphere,5,Vector((0,0,8))), TROPISM=0.0, exclude=None,
         startingpoints=[], apicalcontrol=0, apicalcontrolfalloff=1, apicaltiming=0):
     self.killdistance = KILLDIST
     self.branchlength = d
@@ -89,7 +110,7 @@ class SCA:
     print(self.startpoints)
     print('--------')
     
-    self.bp, self.bpp = sca(self.ep, self.startpoints, extra_eps, self.maxiterations, self.branchlength, self.killdistance, self.tropism)
+    self.bp, self.bpp = sca(self.ep, self.startpoints, extra_eps, self.maxiterations, self.branchlength, self.killdistance, self.tropism, self.exclude)
     
     print('--------')
     print('branchpoints')

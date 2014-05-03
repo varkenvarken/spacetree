@@ -24,6 +24,7 @@
 
 using namespace std;
 
+// verify that the sequence consists exclusively of triples of doubles
 static int py_sequence_of_3sequence(PyObject *sequence, points &result){
 	if (!PySequence_Check(sequence)){ return 0; }
 
@@ -41,11 +42,9 @@ static int py_sequence_of_3sequence(PyObject *sequence, points &result){
 
 static PyObject *py_sca(PyObject *self, PyObject *args)
 {
-	printf("py_sca\n");
 	auto startpoints = points();
 	auto endpoints = points();
 	auto additionalendpoints = points();
-	//printf("py_sca start \n");
 
 	PyObject *endpointlist, *startpointlist, *additionalendpointlist, *callback = NULL;
 	int niterations;
@@ -71,12 +70,10 @@ static PyObject *py_sca(PyObject *self, PyObject *args)
 	auto branchpoints = points();
 	auto branchpointparents = indices();
 
-	//printf("py_sca start iterate\n");
 	// TODO add some exception handling in iterate()
 	int n = iterate(startpoints, endpoints, additionalendpoints,
 		niterations, branchlength, killdistance, tropism, callback, 
 		branchpoints, branchpointparents);
-	//printf("n brachpoints %d\n", branchpoints.size());
 
 	PyObject *branchpointlist = PyList_New(0);
 	for (auto v: branchpoints){
@@ -90,6 +87,7 @@ static PyObject *py_sca(PyObject *self, PyObject *args)
 	return Py_BuildValue("OO", branchpointlist,branchpointparentlist);
 }
 
+// some test code to figure out how to deal with a callback.
 static PyObject *py_testcallback(PyObject *self, PyObject *args){
 	printf("py_testcallback\n");
 	PyObject *callback = NULL;
@@ -140,15 +138,15 @@ static PyObject *py_testcallback(PyObject *self, PyObject *args){
 }
 
 static PyMethodDef csca_methods[] = {
-	{ "sca", py_sca, METH_VARARGS, "sca doc string" },
-	{ "testcallback", py_testcallback, METH_VARARGS, "testcallback doc string" },
+	{ "sca", py_sca, METH_VARARGS, "branchpoints, parentindices = sca(endpoints, startpoints, xtraendpoints, iterations, branchlength, killdistance, troppism, exclude_callback)" },
+	// { "testcallback", py_testcallback, METH_VARARGS, "testcallback doc string" },
 	{ NULL, NULL }
 };
 
 static struct PyModuleDef cscamodule = {
 	PyModuleDef_HEAD_INIT,
 	"csca",
-	"csca module doc string",
+	"c implementation of the space colonization algorithm",
 	-1,
 	csca_methods,
 	NULL,

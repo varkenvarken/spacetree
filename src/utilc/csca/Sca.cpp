@@ -29,6 +29,7 @@
 #include <iostream>
 
 #define SQRT_DBL_MAX sqrt(DBL_MAX)
+#define EPS 1e-7
 
 using namespace std;
 
@@ -69,9 +70,10 @@ static point *multiply(const point &a, const double b){
 	return new point{ a[0] * b, a[1] * b, a[2] * b };
 }
 
+// normalize the length of a point. Leaves point intact if length is small.
 static point *normalize(const point &a){
 	auto len = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
-	if (len > 1e-7){
+	if (len > EPS){
 		len = sqrt(len);
 		return new point{ a[0] / len, a[1] / len, a[2] / len };
 	}
@@ -84,6 +86,7 @@ static double dot(const point *a, const point *b){
 	return (*a)[0] * (*b)[0] + (*a)[1] * (*b)[1] + (*a)[2] * (*b)[2];
 }
 
+// call a Python function that returns a boolean value
 static bool exclude(point *p, PyObject *callback){
 	PyObject *arg;
 	PyObject *result;
@@ -103,17 +106,21 @@ static bool exclude(point *p, PyObject *callback){
 }
 
 // functions to actually evolve a tree with the space tree colonization algorithm
+
+// returns the distance to the branchpoint closest to a given endpoint. Also, returns the index and the normalized 
+// direction from this branchpoint to the endpoint. Fully connected branchpoints (i.e. with two children) are ignored.
 static double closest_branchpoint(const point endpoint, int &branchpointindex, point &normalizeddirection){
 	double mind2 = DBL_MAX;
 	point *mindir = NULL;
-	int bpi = -1;
-	//printf("closest_branchpoint\n");
-	for (auto bp : *bp_position){
-		bpi++;
-		//printf("closest_branchpoint %d\n",bpi);
+	point *dir;
+	double d2;
+
+	int n = bp_position->size();
+//#pragma omp parallel for private(dir, d2)
+	for (decltype(n) bpi = 0; bpi<n; bpi++){
 		if (bp_connections[bpi] > 1) continue; // fully connected branchpoints will not grow new shoots
-		point *dir = subtract(endpoint, bp);
-		double d2 = dot(dir, dir);
+		dir = subtract(endpoint, (*bp_position)[bpi]);
+		d2 = dot(dir, dir);
 		if (d2 < mind2){
 			mind2 = d2;
 			mindir = dir;
@@ -123,40 +130,41 @@ static double closest_branchpoint(const point endpoint, int &branchpointindex, p
 			delete dir;
 		}
 	}
-	//printf("closest_branchpoint normalize\n");
+
 	double d = sqrt(mind2);
-	if (d > 1e-7){
+	if (d > EPS){
 		normalizeddirection[0] = (*mindir)[0] / d;
 		normalizeddirection[1] = (*mindir)[1] / d;
 		normalizeddirection[2] = (*mindir)[2] / d;
 	}
-	//printf("closest_branchpoint done\n");
-
+	
 	return d;
 }
 
+// add a new endpoint and update all dependent information (like what's the closest branchpoint)
 static void add_endpoint(point &ep){
 	int bpi;
 	point dir;
-	//printf("add_endpoint start\n");
+
 	double distance = closest_branchpoint(ep, bpi, dir);
 	
-	//printf("add_endpoint adding values bpi:%d, dir:%.4f %.4f %.4f\n",bpi, dir[0],dir[1],dir[2]);
-
 	ep_closestbranchpointindex.push_back(bpi);
 	ep_closestdistance.push_back(distance);
 	ep_normalizeddirection.push_back(dir);
 	ep_position.push_back(ep);
-	//printf("add_endpoint done adding values\n");
 }
 
+// add a child branchpoint to the branchpoint at branchpointindex
 static void add_branchpoint(int branchpointindex, const point &dir, double branchlength, double killdistance, PyObject *excludecallback){
-	//printf("add_branchpoint, parent %d\n", branchpointindex);
+
+	// calculate the position of the new branchpoint
 	point *branch = multiply(dir, branchlength);
 	point *newbranchpoint = add((*bp_position)[branchpointindex], *branch);
 
+	// if a callback is defined, call it to determine if the new position is allowed.
 	if (excludecallback != NULL && exclude(newbranchpoint, excludecallback)) return;
 
+	// connect the new branchpoint
 	(*bp_position).push_back(*newbranchpoint);
 	(*bp_parent).push_back(branchpointindex);
 	bp_connections[branchpointindex]++;
@@ -169,14 +177,14 @@ static void add_branchpoint(int branchpointindex, const point &dir, double branc
 		epi++;
 		point *dir = subtract(ep, *newbranchpoint);
 		double d = sqrt(dot(dir, dir));
-		if (d < killdistance){
+		if (d < killdistance){	
 			ep_closestbranchpointindex[epi] = -1;
 			delete dir;
 		}
 		else if (d < ep_closestdistance[epi]){
 			ep_closestbranchpointindex[epi] = bpi;
 			ep_closestdistance[epi] = d;
-			if (d>1e-7){
+			if (d>EPS){
 				(*dir)[0] /= d;
 				(*dir)[1] /= d;
 				(*dir)[2] /= d;
@@ -209,12 +217,13 @@ static void add_branchpoint(int branchpointindex, const point &dir, double branc
 	delete newbranchpoint;
 }
 
+// process a single iteration of new branchpoints
 static void newbranchpoints(double branchlength, double killdistance, double tropism, PyObject *excludecallback){
+	
 	// create a set of unique branchpoint indices
 	auto live_branchpoints = unordered_set<int>(ep_closestbranchpointindex.begin(), ep_closestbranchpointindex.end());
 
 	for (auto bpi : live_branchpoints){
-		//printf("live_branchpoint %d\n", bpi);
 		if (bpi < 0) continue; // endpoints that are dead for various reasons
 		auto sumdir = point();
 		int epi = -1;
@@ -248,19 +257,16 @@ int iterate(
 	indices &branchpointparents)
 {
 	// truncate globals to remove stuff from a previous call to iterate
-	//printf("iterate start\n");
 	ep_closestbranchpointindex.clear();
 	ep_closestdistance.clear();
 	ep_normalizeddirection.clear();
 	ep_position.clear();
 	bp_connections.clear();
 
-	//printf("iterate global\n");
 	// create global pointers so we don't have to pass these arguments again and again
 	bp_position = &branchpoints;
 	bp_parent = &branchpointparents;
 
-	//printf("iterate init bps\n");
 	// initialize branchpoints
 	for (auto sp : startpoints){
 		bp_position->push_back(sp);
@@ -268,13 +274,11 @@ int iterate(
 		bp_connections.push_back(0);
 	}
 
-	//printf("iterate init eps\n");
 	// initialize endpoints
 	for (auto ep : endpoints){
 		add_endpoint(ep);
 	}
 
-	//printf("iterate adding branchpoints\n");
 	int extra_eps = additionalendpoints.size() / niterations; // extra eps per iteration
 	for (int i = 0; i < niterations; i++){
 		//dump_endpoints(i);

@@ -153,7 +153,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;CSCA_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>E:\Blender Source Environment\lib\win64_vc12\python\include\python3.3;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>E:\Blender Source Environment\lib\win64_vc12\python\include\python3.4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OpenMPSupport>true</OpenMPSupport>
     </ClCompile>
     <Link>
@@ -163,7 +163,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <OutputFile>C:\Users\Michel\Documents\GitHub\spacetree\src\add_mesh_space_tree\$(TargetName)$(TargetExt)</OutputFile>
       <AdditionalLibraryDirectories>E:\Blender Source Environment\lib\win64_vc12\python\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>python33.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>python34.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <CustomBuildStep>
       <Command>copy /B /Y C:\Users\Michel\Documents\GitHub\spacetree\src\add_mesh_space_tree\csca.pyd e:\blender-2.70-release-win64\2.70\scripts\modules\csca.pyd

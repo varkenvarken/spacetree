@@ -91,7 +91,7 @@ def pointInsideMesh(pointrelativetocursor,ob):
     count = 0
     axis=Vector((0,0,1))
     while True:
-        location,normal,index = ob.ray_cast(orig,orig+axis*10000.0)
+        location,normal,index = ob.ray_cast(orig,orig+axis*10000.0)[-3:]
         if index == -1: break
         count += 1
         orig = location + axis*0.00001

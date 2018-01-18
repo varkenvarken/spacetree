@@ -15,6 +15,12 @@ Current developments can be followed on BlenderArtists:
 
 http://blenderartists.org/forum/showthread.php?282550-A-new-tree-add-on
 
+Note
+====
+
+a commercial version of this add-on is available on Blender Market:
+https://blendermarket.com/creators/varkenvarken
+
 INSTALLATION
 ============
 
